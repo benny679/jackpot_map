@@ -4,6 +4,8 @@ import datetime
 import json
 import hashlib
 import os
+import pickle
+from pathlib import Path
 
 # Import your user management functions (assuming they're in a file called user_management.py)
 # If your script is named differently, change the import accordingly
@@ -32,21 +34,59 @@ def load_credentials():
 # Session timeout configuration (in seconds)
 SESSION_TIMEOUT = 1800  # 30 minutes
 
+# Function to create session folder and file
+def setup_session_storage():
+    session_dir = Path("./.streamlit/sessions")
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return session_dir
+
+# Function to save session data to file
+def save_session(session_id, data):
+    session_dir = setup_session_storage()
+    session_file = session_dir / f"{session_id}.pkl"
+    with open(session_file, 'wb') as f:
+        pickle.dump(data, f)
+
+# Function to load session data from file
+def load_session(session_id):
+    session_dir = setup_session_storage()
+    session_file = session_dir / f"{session_id}.pkl"
+    if session_file.exists():
+        try:
+            with open(session_file, 'rb') as f:
+                return pickle.load(f)
+        except:
+            return None
+    return None
+
+# Generate a unique session ID based on client info (will persist across refreshes)
+def get_session_id():
+    import socket
+    client_ip = socket.gethostbyname(socket.gethostname())
+    client_id = hashlib.md5(client_ip.encode()).hexdigest()
+    return client_id
+
+# Get the session ID for this client
+session_id = get_session_id()
+
+# Try to load existing session data
+session_data = load_session(session_id)
+
 # Initialize session state variables
 if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
+    st.session_state.logged_in = False if session_data is None else session_data.get('logged_in', False)
     
 if 'login_time' not in st.session_state:
-    st.session_state.login_time = None
+    st.session_state.login_time = None if session_data is None else session_data.get('login_time', None)
     
 if 'username' not in st.session_state:
-    st.session_state.username = None
+    st.session_state.username = None if session_data is None else session_data.get('username', None)
     
 if 'role' not in st.session_state:
-    st.session_state.role = None
+    st.session_state.role = None if session_data is None else session_data.get('role', None)
     
 if 'last_activity' not in st.session_state:
-    st.session_state.last_activity = None
+    st.session_state.last_activity = None if session_data is None else session_data.get('last_activity', None)
 
 def check_session_timeout():
     """Check if the session has timed out"""
@@ -61,8 +101,18 @@ def check_session_timeout():
     return False
 
 def update_activity():
-    """Update the last activity timestamp"""
+    """Update the last activity timestamp and save session"""
     st.session_state.last_activity = time.time()
+    
+    # Save session data to file
+    session_data = {
+        'logged_in': st.session_state.logged_in,
+        'login_time': st.session_state.login_time,
+        'username': st.session_state.username,
+        'role': st.session_state.role,
+        'last_activity': st.session_state.last_activity
+    }
+    save_session(session_id, session_data)
 
 def authenticate(username, password):
     """Authenticate a user against the credentials file"""
@@ -83,6 +133,16 @@ def authenticate(username, password):
             st.session_state.role = user_data["role"]
             st.session_state.login_time = time.time()
             st.session_state.last_activity = time.time()
+            
+            # Save session data to file
+            session_data = {
+                'logged_in': st.session_state.logged_in,
+                'login_time': st.session_state.login_time,
+                'username': st.session_state.username,
+                'role': st.session_state.role,
+                'last_activity': st.session_state.last_activity
+            }
+            save_session(session_id, session_data)
             return True
     
     return False
@@ -97,6 +157,12 @@ def logout_user(message=None):
     
     if message:
         st.session_state.logout_message = message
+        
+    # Clear the persistent session file
+    session_dir = setup_session_storage()
+    session_file = session_dir / f"{session_id}.pkl"
+    if session_file.exists():
+        session_file.unlink()
 
 # Check for session timeout on each interaction
 session_expired = check_session_timeout()
