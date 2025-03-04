@@ -1,13 +1,15 @@
-import os
+import streamlit as st
+import time
+import datetime
 import json
 import hashlib
-import secrets
-import argparse
+import os
 
-def generate_salt():
-    """Generate a random salt for password hashing"""
-    return secrets.token_hex(16)
+# Import your user management functions (assuming they're in a file called user_management.py)
+# If your script is named differently, change the import accordingly
+# from user_management import load_credentials, hash_password
 
+# Function to hash password (copied from your script for direct usage)
 def hash_password(password, salt):
     """Hash a password with a salt using PBKDF2"""
     return hashlib.pbkdf2_hmac(
@@ -17,162 +19,168 @@ def hash_password(password, salt):
         100000  # 100,000 iterations
     ).hex()
 
+# Function to load credentials (copied from your script for direct usage)
 def load_credentials():
     """Load user credentials from a JSON file."""
     try:
         with open("credentials.json", "r") as f:
             return json.load(f)
     except FileNotFoundError:
-        # Create a default admin user if file doesn't exist
-        default_salt = generate_salt()
-        default_credentials = {
-            "admin": {
-                "password": hash_password("admin", default_salt),
-                "salt": default_salt,
-                "role": "admin"
-            }
-        }
-        with open("credentials.json", "w") as f:
-            json.dump(default_credentials, f, indent=4)
-        print("Created credentials.json with default admin user (username: admin, password: admin)")
-        return default_credentials
+        print("Error: credentials.json file not found. Please run the user management script first.")
+        return {}
 
-def save_credentials(credentials):
-    """Save user credentials to a JSON file."""
-    with open("credentials.json", "w") as f:
-        json.dump(credentials, f, indent=4)
-    print("Credentials saved successfully.")
+# Session timeout configuration (in seconds)
+SESSION_TIMEOUT = 1800  # 30 minutes
 
-def add_user(username, password, role):
-    """Add a new user to the credentials file."""
+# Initialize session state variables
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+    
+if 'login_time' not in st.session_state:
+    st.session_state.login_time = None
+    
+if 'username' not in st.session_state:
+    st.session_state.username = None
+    
+if 'role' not in st.session_state:
+    st.session_state.role = None
+    
+if 'last_activity' not in st.session_state:
+    st.session_state.last_activity = None
+
+def check_session_timeout():
+    """Check if the session has timed out"""
+    if st.session_state.logged_in and st.session_state.last_activity:
+        current_time = time.time()
+        time_elapsed = current_time - st.session_state.last_activity
+        
+        if time_elapsed > SESSION_TIMEOUT:
+            # Session expired
+            logout_user("Your session has expired due to inactivity.")
+            return True
+    return False
+
+def update_activity():
+    """Update the last activity timestamp"""
+    st.session_state.last_activity = time.time()
+
+def authenticate(username, password):
+    """Authenticate a user against the credentials file"""
     credentials = load_credentials()
-
+    
     if username in credentials:
-        print(f"Error: User '{username}' already exists.")
-        return False
+        user_data = credentials[username]
+        salt = user_data["salt"]
+        stored_hash = user_data["password"]
+        
+        # Hash the provided password with the stored salt
+        input_hash = hash_password(password, salt)
+        
+        # Check if the hashes match
+        if input_hash == stored_hash:
+            st.session_state.logged_in = True
+            st.session_state.username = username
+            st.session_state.role = user_data["role"]
+            st.session_state.login_time = time.time()
+            st.session_state.last_activity = time.time()
+            return True
+    
+    return False
 
-    salt = generate_salt()
-    hashed_password = hash_password(password, salt)
+def logout_user(message=None):
+    """Log out a user and reset session state"""
+    st.session_state.logged_in = False
+    st.session_state.username = None
+    st.session_state.role = None
+    st.session_state.login_time = None
+    st.session_state.last_activity = None
+    
+    if message:
+        st.session_state.logout_message = message
 
-    credentials[username] = {
-        "password": hashed_password,
-        "salt": salt,
-        "role": role
-    }
+# Check for session timeout on each interaction
+session_expired = check_session_timeout()
 
-    save_credentials(credentials)
-    print(f"User '{username}' added successfully with role '{role}'.")
-    return True
-
-def remove_user(username):
-    """Remove a user from the credentials file."""
-    credentials = load_credentials()
-
-    if username not in credentials:
-        print(f"Error: User '{username}' not found.")
-        return False
-
-    if username == "admin" and len(credentials) == 1:
-        print("Error: Cannot remove the last admin user.")
-        return False
-
-    del credentials[username]
-    save_credentials(credentials)
-    print(f"User '{username}' removed successfully.")
-    return True
-
-def change_password(username, new_password):
-    """Change a user's password."""
-    credentials = load_credentials()
-
-    if username not in credentials:
-        print(f"Error: User '{username}' not found.")
-        return False
-
-    salt = generate_salt()
-    hashed_password = hash_password(new_password, salt)
-
-    credentials[username]["password"] = hashed_password
-    credentials[username]["salt"] = salt
-
-    save_credentials(credentials)
-    print(f"Password for user '{username}' changed successfully.")
-    return True
-
-def change_role(username, new_role):
-    """Change a user's role."""
-    credentials = load_credentials()
-
-    if username not in credentials:
-        print(f"Error: User '{username}' not found.")
-        return False
-
-    credentials[username]["role"] = new_role
-    save_credentials(credentials)
-    print(f"Role for user '{username}' changed to '{new_role}' successfully.")
-    return True
-
-def list_users():
-    """List all users and their roles."""
-    credentials = load_credentials()
-
-    print("\nUser List:")
-    print("-" * 40)
-    print(f"{'Username':<20} {'Role':<10}")
-    print("-" * 40)
-
-    for username, data in credentials.items():
-        print(f"{username:<20} {data['role']:<10}")
-
-    print("-" * 40)
-    print(f"Total users: {len(credentials)}")
-
+# Main application logic
 def main():
-    parser = argparse.ArgumentParser(description="User Management Utility")
-    subparsers = parser.add_subparsers(dest="command", help="Command")
-
-    # Add user
-    add_parser = subparsers.add_parser("add", help="Add a new user")
-    add_parser.add_argument("username", help="Username")
-    add_parser.add_argument("password", help="Password")
-    add_parser.add_argument("role", choices=["admin", "analyst", "viewer"], help="User role")
-
-    # Remove user
-    remove_parser = subparsers.add_parser("remove", help="Remove a user")
-    remove_parser.add_argument("username", help="Username")
-
-    # Change password
-    password_parser = subparsers.add_parser("password", help="Change a user's password")
-    password_parser.add_argument("username", help="Username")
-    password_parser.add_argument("new_password", help="New password")
-
-    # Change role
-    role_parser = subparsers.add_parser("role", help="Change a user's role")
-    role_parser.add_argument("username", help="Username")
-    role_parser.add_argument("new_role", choices=["admin", "analyst", "viewer"], help="New role")
-
-    # List users
-    subparsers.add_parser("list", help="List all users")
-
-    # Init
-    subparsers.add_parser("init", help="Initialize credentials file")
-
-    args = parser.parse_args()
-
-    if args.command == "add":
-        add_user(args.username, args.password, args.role)
-    elif args.command == "remove":
-        remove_user(args.username)
-    elif args.command == "password":
-        change_password(args.username, args.new_password)
-    elif args.command == "role":
-        change_role(args.username, args.new_role)
-    elif args.command == "list":
-        list_users()
-    elif args.command == "init":
-        load_credentials()
+    st.title("Secure Streamlit Application")
+    
+    # Handle user authentication
+    if not st.session_state.logged_in:
+        # Show login form
+        st.subheader("Login")
+        
+        # Display logout message if set
+        if 'logout_message' in st.session_state and st.session_state.logout_message:
+            st.warning(st.session_state.logout_message)
+            # Clear the message after showing it
+            st.session_state.logout_message = None
+        
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        
+        if st.button("Login"):
+            if authenticate(username, password):
+                st.rerun()
+            else:
+                st.error("Invalid username or password")
     else:
-        parser.print_help()
+        # Update activity timestamp
+        update_activity()
+        
+        # Display user information and remaining session time
+        st.sidebar.subheader(f"Welcome, {st.session_state.username}")
+        st.sidebar.text(f"Role: {st.session_state.role}")
+        
+        # Calculate and display remaining session time
+        if st.session_state.last_activity:
+            elapsed = time.time() - st.session_state.last_activity
+            remaining = max(0, SESSION_TIMEOUT - elapsed)
+            st.sidebar.info(f"Session expires in: {datetime.timedelta(seconds=int(remaining))}")
+        
+        # Logout button
+        if st.sidebar.button("Logout"):
+            logout_user("You have been logged out successfully.")
+            st.rerun()
+        
+        # Main content based on user role
+        if st.session_state.role == "admin":
+            admin_dashboard()
+        elif st.session_state.role == "analyst":
+            analyst_dashboard()
+        else:
+            viewer_dashboard()
 
+def admin_dashboard():
+    st.header("Admin Dashboard")
+    st.write("Welcome to the admin dashboard. You have full access to all features.")
+    
+    # Admin-specific features here
+    st.subheader("User Management")
+    st.write("Here you would have controls to add/remove users, change permissions, etc.")
+    
+    # Add more admin functionality
+
+def analyst_dashboard():
+    st.header("Analyst Dashboard")
+    st.write("Welcome to the analyst dashboard. You can view and analyze data.")
+    
+    # Analyst-specific features here
+    st.subheader("Data Analysis")
+    st.write("Here you would have tools for analyzing data.")
+    
+    # Add more analyst functionality
+
+def viewer_dashboard():
+    st.header("Viewer Dashboard")
+    st.write("Welcome to the viewer dashboard. You can view reports and dashboards.")
+    
+    # Viewer-specific features here
+    st.subheader("Reports")
+    st.write("Here you would see read-only reports and visualizations.")
+    
+    # Add more viewer functionality
+
+# Run the main application
 if __name__ == "__main__":
     main()
