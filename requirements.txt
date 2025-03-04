@@ -1,0 +1,7 @@
+pandas
+numpy
+gspread
+oauth2client
+slack_sdk
+streamlit
+requests
