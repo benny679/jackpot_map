@@ -708,6 +708,7 @@ if st.session_state.selected_country:
                                 y='Tax Rate (%)', 
                                 color='Entity',
                                 barmode='group',
+                            )
                             
                             fig = px.bar(
                                 plot_df, 
