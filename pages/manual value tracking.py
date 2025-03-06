@@ -6,9 +6,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.ticker as ticker
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
 from datetime import datetime, timedelta, date
 import io
 import os
@@ -94,38 +91,6 @@ def load_manual_tracking_data():
         st.error(f"Error loading manual tracking data: {str(e)}")
         return pd.DataFrame()
 
-def create_level_plot(df, casino, game, region, start_date, end_date, plot_type="Matplotlib"):
-    """Create a plot of level data over time using the specified plotting library."""
-    # Filter data based on selection
-    filtered_df = df[
-        (df["Casino"] == casino) &
-        (df["Game"] == game) &
-        (df["Region"] == region) &
-        (df["DateTime"] >= start_date) &
-        (df["DateTime"] <= end_date)
-    ].copy()
-    
-    if filtered_df.empty:
-        st.warning("No data available for the selected criteria.")
-        return None
-    
-    # Get level columns
-    level_columns = [col for col in filtered_df.columns if col.startswith("Level ")]
-    num_levels = len(level_columns)
-    
-    if num_levels == 0:
-        st.warning("No level data found for the selected criteria.")
-        return None
-    
-    # Create plot based on selected type
-    if plot_type == "Matplotlib":
-        return create_matplotlib_plot(filtered_df, level_columns, casino, game, region)
-    elif plot_type == "Plotly Interactive":
-        return create_plotly_plot(filtered_df, level_columns, casino, game, region)
-    else:
-        # Default to Matplotlib if type not recognized
-        return create_matplotlib_plot(filtered_df, level_columns, casino, game, region)
-
 def create_matplotlib_plot(filtered_df, level_columns, casino, game, region):
     """Create a Matplotlib plot of level data."""
     # Set datetime as index for proper time-series plotting
@@ -172,54 +137,6 @@ def create_matplotlib_plot(filtered_df, level_columns, casino, game, region):
     plt.tight_layout()
     return fig
 
-def create_plotly_plot(filtered_df, level_columns, casino, game, region):
-    """Create a Plotly plot of level data."""
-    # Create a proper datetime index
-    filtered_df = filtered_df.sort_values("DateTime")
-    
-    num_levels = len(level_columns)
-    
-    # Create a figure with subplots - one row per level
-    fig = make_subplots(
-        rows=num_levels, 
-        cols=1,
-        subplot_titles=[f"{level}" for level in level_columns],
-        vertical_spacing=0.1
-    )
-    
-    # Define marker symbols - avoid using 'symbol' property directly
-    markers = dict(size=8)
-    
-    # Add traces for each level
-    for i, level in enumerate(level_columns):
-        fig.add_trace(
-            go.Scatter(
-                x=filtered_df["DateTime"],
-                y=filtered_df[level],
-                mode='lines+markers',
-                name=level,
-                line=dict(width=2),
-                marker=markers  # Use the marker dict without 'symbol' property
-            ),
-            row=i+1, 
-            col=1
-        )
-        
-        # Update axes for each subplot
-        fig.update_xaxes(title_text="Date", row=i+1, col=1)
-        fig.update_yaxes(title_text="Value", row=i+1, col=1)
-    
-    # Update layout
-    fig.update_layout(
-        title_text=f"{casino} - {game} - {region}",
-        height=300 * num_levels,
-        width=900,
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    
-    return fig
-
 # Main app code
 def main():
     # Check if the user is authenticated
@@ -253,20 +170,6 @@ def main():
         # Sidebar filters
         st.sidebar.header("Filters")
         
-        # Add a plot type selector to the sidebar
-        plot_type = st.sidebar.radio(
-            "Chart Type",
-            ["Matplotlib", "Plotly Interactive"],
-            index=0,
-            help="Select the chart type to visualize your data"
-        )
-
-        # Store the plot type in session state
-        if 'plot_type' not in st.session_state:
-            st.session_state.plot_type = plot_type
-        else:
-            st.session_state.plot_type = plot_type
-            
         # Date range selection
         st.sidebar.subheader("Date Range")
         
@@ -329,47 +232,50 @@ def main():
         
         # Check if we should generate a new plot or use stored one
         if generate_plot:
-            # Store current settings
-            st.session_state.plot_settings = {
-                'casino': selected_casino,
-                'game': selected_game,
-                'region': selected_region,
-                'start_date': start_datetime,
-                'end_date': end_datetime
-            }
+            # Filter data based on selection
+            filtered_df = df[
+                (df["Casino"] == selected_casino) &
+                (df["Game"] == selected_game) &
+                (df["Region"] == selected_region) &
+                (df["DateTime"] >= start_datetime) &
+                (df["DateTime"] <= end_datetime)
+            ].copy()
             
-            # Generate and store the plot
-            st.session_state.current_plot = create_level_plot(
-                df, 
-                selected_casino, 
-                selected_game, 
-                selected_region, 
-                start_datetime, 
-                end_datetime,
-                st.session_state.plot_type
-            )
-            st.session_state.plot_generated = True
+            if filtered_df.empty:
+                st.warning("No data available for the selected criteria.")
+            else:
+                # Get level columns
+                level_columns = [col for col in filtered_df.columns if col.startswith("Level ")]
+                
+                if not level_columns:
+                    st.warning("No level data found for the selected criteria.")
+                else:
+                    # Store current settings
+                    st.session_state.plot_settings = {
+                        'casino': selected_casino,
+                        'game': selected_game,
+                        'region': selected_region,
+                        'start_date': start_datetime,
+                        'end_date': end_datetime
+                    }
+                    
+                    # Generate and store the plot
+                    st.session_state.current_plot = create_matplotlib_plot(
+                        filtered_df, 
+                        level_columns, 
+                        selected_casino, 
+                        selected_game, 
+                        selected_region
+                    )
+                    st.session_state.plot_generated = True
         
         # Display plot if available
         if st.session_state.plot_generated and st.session_state.current_plot:
             try:
                 st.subheader(f"Level Values for {st.session_state.plot_settings['casino']} - {st.session_state.plot_settings['game']} - {st.session_state.plot_settings['region']}")
-                
-                # Display plot based on type
-                if st.session_state.plot_type == "Matplotlib":
-                    st.pyplot(st.session_state.current_plot)
-                elif st.session_state.plot_type == "Plotly Interactive":
-                    # For Plotly, we need to ensure the data is correctly formatted
-                    if st.session_state.current_plot is not None:
-                        st.plotly_chart(st.session_state.current_plot, use_container_width=True)
-                    else:
-                        st.error("Error generating Plotly chart.")
-                else:
-                    # Default to matplotlib
-                    st.pyplot(st.session_state.current_plot)
+                st.pyplot(st.session_state.current_plot)
             except Exception as e:
                 st.error(f"Error displaying chart: {str(e)}")
-                st.info("Try selecting a different chart type from the sidebar.")
                 
             # Debug Slack settings - show only if the plot is already generated
             debug_slack = st.checkbox("Debug Slack Settings")
@@ -407,20 +313,14 @@ def main():
                         temp_dir = tempfile.gettempdir()
                         plot_file = os.path.join(temp_dir, "manual_tracking_plot.png")
                         
-                        # Save the plot based on type
-                        if st.session_state.plot_type == "Matplotlib":
-                            st.session_state.current_plot.savefig(
-                                plot_file,
-                                bbox_inches='tight',
-                                dpi=300,
-                                facecolor='white',
-                                edgecolor='none'
-                            )
-                        elif st.session_state.plot_type == "Plotly Interactive":
-                            # Save Plotly chart as image
-                            img_bytes = st.session_state.current_plot.to_image(format="png", scale=2)
-                            with open(plot_file, 'wb') as f:
-                                f.write(img_bytes)
+                        # Save the plot
+                        st.session_state.current_plot.savefig(
+                            plot_file,
+                            bbox_inches='tight',
+                            dpi=300,
+                            facecolor='white',
+                            edgecolor='none'
+                        )
                         
                         st.info(f"Sending plot to Slack channel...")
                         
@@ -448,39 +348,18 @@ def main():
                     except Exception as e:
                         st.error(f"Error preparing plot for upload: {str(e)}")
             
-            # Add download options for the plot
+            # Add download option for the plot
             try:
-                if st.session_state.plot_type == "Matplotlib":
-                    buf = io.BytesIO()
-                    st.session_state.current_plot.savefig(buf, format="png", bbox_inches='tight', dpi=300)
-                    buf.seek(0)
-                    
-                    st.download_button(
-                        label="Download Plot as PNG",
-                        data=buf,
-                        file_name=f"manual_tracking_{st.session_state.plot_settings['casino']}_{st.session_state.plot_settings['game']}_{st.session_state.plot_settings['region']}.png",
-                        mime="image/png"
-                    )
-                elif st.session_state.plot_type == "Plotly Interactive":
-                    # For Plotly, offer both image and HTML download options
-                    img_bytes = st.session_state.current_plot.to_image(format="png", scale=2)
-                    html_bytes = st.session_state.current_plot.to_html(include_plotlyjs="cdn").encode()
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.download_button(
-                            label="Download as PNG",
-                            data=img_bytes,
-                            file_name=f"manual_tracking_{st.session_state.plot_settings['casino']}_{st.session_state.plot_settings['game']}_{st.session_state.plot_settings['region']}.png",
-                            mime="image/png"
-                        )
-                    with col2:
-                        st.download_button(
-                            label="Download as HTML",
-                            data=html_bytes,
-                            file_name=f"manual_tracking_{st.session_state.plot_settings['casino']}_{st.session_state.plot_settings['game']}_{st.session_state.plot_settings['region']}.html",
-                            mime="text/html"
-                        )
+                buf = io.BytesIO()
+                st.session_state.current_plot.savefig(buf, format="png", bbox_inches='tight', dpi=300)
+                buf.seek(0)
+                
+                st.download_button(
+                    label="Download Plot as PNG",
+                    data=buf,
+                    file_name=f"manual_tracking_{st.session_state.plot_settings['casino']}_{st.session_state.plot_settings['game']}_{st.session_state.plot_settings['region']}.png",
+                    mime="image/png"
+                )
             except Exception as e:
                 st.error(f"Error preparing download: {str(e)}")
         
