@@ -1,4 +1,65 @@
-import streamlit as st
+# Responsible Gambling view
+with tab3:
+    st.header("Responsible Gambling Measures by Country")
+    
+    # Check if the responsible gambling columns exist
+    rg_columns = [col for col in df.columns if col in ['Responsible Gambling (iGaming)', 'Stake_limit', 'Deposit_limit', 'Withdrawal_limit']]
+    
+    if 'Responsible Gambling (iGaming)' in rg_columns:
+        # If there's a general RG score column
+        fig_rg = px.choropleth(
+            filtered_df,
+            locations="Country_region",
+            locationmode="country names",
+            color="Responsible Gambling (iGaming)",
+            hover_name="Country_region",
+            hover_data=["Market_region", "Regulated"],
+            color_continuous_scale=px.colors.sequential.Greens,
+            title="Responsible Gambling Score by Country"
+        )
+        
+        fig_rg.update_layout(
+            height=600,
+            margin={"r": 0, "t": 30, "l": 0, "b": 0}
+        )
+        
+        st.plotly_chart(fig_rg, use_container_width=True)
+    
+    # Specific Responsible Gambling measures
+    rg_measures = [col for col in ['Stake_limit', 'Deposit_limit', 'Withdrawal_limit'] if col in df.columns]
+    
+    if rg_measures:
+        st.subheader("Responsible Gambling Measures")
+        selected_measure = st.selectbox("Select Measure", rg_measures)
+        
+        # Create a map for the selected measure
+        fig_measure = px.choropleth(
+            filtered_df,
+            locations="Country_region",
+            locationmode="country names",
+            color=selected_measure,
+            hover_name="Country_region",
+            hover_data=["Market_region", selected_measure],
+            color_discrete_sequence=px.colors.qualitative.Safe,
+            title=f"{selected_measure.replace('_', ' ').title()} Requirements by Country"
+        )
+        
+        fig_measure.update_layout(
+            height=500,
+            margin={"r": 0, "t": 30, "l": 0, "b": 0}
+        )
+        
+        st.plotly_chart(fig_measure, use_container_width=True)
+    
+    # If no responsible gambling data is available
+    if not rg_columns:
+        st.info("No responsible gambling data available in the dataset.")
+        
+    # Table of RG measures
+    if rg_measures:
+        st.subheader("Responsible Gambling Measures by Country")
+        rg_data = filtered_df[['Country_region', 'Market_region'] + rg_measures]
+        st.dataframe(rg_data, use_container_width=True)import streamlit as st
 import pandas as pd
 import plotly.express as px
 import gspread
@@ -54,17 +115,31 @@ all_market_regions = sorted(df['Market_region'].unique())
 selected_market_regions = st.sidebar.multiselect("Select Market Regions", all_market_regions, default=all_market_regions)
 
 # Regulation type filter
-all_regulation_types = sorted(df['Regulation_type'].unique())
-selected_regulation_types = st.sidebar.multiselect("Select Regulation Types", all_regulation_types, default=all_regulation_types)
+if 'Regulation_type' in df.columns:
+    all_regulation_types = sorted(df['Regulation_type'].unique())
+    selected_regulation_types = st.sidebar.multiselect("Select Regulation Types", all_regulation_types, default=all_regulation_types)
+    
+    # Filter data based on selection
+    filtered_df = df[
+        (df['Market_region'].isin(selected_market_regions)) &
+        (df['Regulation_type'].isin(selected_regulation_types))
+    ]
+else:
+    # If Regulation_type column is not present
+    filtered_df = df[df['Market_region'].isin(selected_market_regions)]
 
-# Filter data based on selection
-filtered_df = df[
-    (df['Market_region'].isin(selected_market_regions)) &
-    (df['Regulation_type'].isin(selected_regulation_types))
-]
+# Priority region filter
+if 'Priority region' in df.columns:
+    priority_options = ['All', 'Priority Only', 'Non-Priority Only']
+    priority_filter = st.sidebar.radio("Priority Regions", priority_options)
+    
+    if priority_filter == 'Priority Only':
+        filtered_df = filtered_df[filtered_df['Priority region'] == 'Yes']
+    elif priority_filter == 'Non-Priority Only':
+        filtered_df = filtered_df[filtered_df['Priority region'] != 'Yes']
 
 # Create tabs
-tab1, tab2, tab3 = st.tabs(["Regulation Map", "Tax Map", "Data Table"])
+tab1, tab2, tab3, tab4 = st.tabs(["Regulation Map", "Tax Map", "Responsible Gambling", "Data Table"])
 
 # Regulation Map view
 with tab1:
@@ -135,7 +210,11 @@ with tab2:
     st.header("iGaming Tax Rates by Country")
     
     # Choose between operator tax and player tax
-    tax_type = st.radio("Select Tax Type:", ["Operator_tax", "Player_tax", "Tax (iGaming)"], 
+    tax_options = ["Operator_tax", "Player_tax"]
+    if "Tax (iGaming)" in df.columns:
+        tax_options.append("Tax (iGaming)")
+    
+    tax_type = st.radio("Select Tax Type:", tax_options, 
                           format_func=lambda x: x.replace("_", " ").title())
     
     # Create tax rate map
@@ -204,83 +283,118 @@ if selected_country:
         with col1:
             st.subheader(country_data['Country_region'].iloc[0])
             st.markdown(f"**Market Region:** {country_data['Market_region'].iloc[0]}")
-            st.markdown(f"**Regulation Type:** {country_data['Regulation_type'].iloc[0]}")
-            st.markdown(f"**Regulated:** {country_data['Regulated'].iloc[0]}")
+            
+            if 'Regulation_type' in country_data.columns:
+                st.markdown(f"**Regulation Type:** {country_data['Regulation_type'].iloc[0]}")
+            
+            if 'Regulated' in country_data.columns:
+                st.markdown(f"**Regulated:** {country_data['Regulated'].iloc[0]}")
+                
+            if 'Legality/Regulation' in country_data.columns:
+                st.markdown(f"**Legality/Regulation:** {country_data['Legality/Regulation'].iloc[0]}")
             
             # Create a metrics card for tax information
             st.subheader("Tax Information")
-            col_a, col_b, col_c = st.columns(3)
+            tax_columns = [col for col in ['Operator_tax', 'Player_tax', 'Tax (iGaming)'] 
+                           if col in country_data.columns]
             
-            with col_a:
-                if 'Operator_tax' in country_data.columns:
-                    st.metric("Operator Tax", f"{country_data['Operator_tax'].iloc[0]}%")
-            
-            with col_b:
-                if 'Player_tax' in country_data.columns:
-                    st.metric("Player Tax", f"{country_data['Player_tax'].iloc[0]}%")
-            
-            with col_c:
-                if 'Tax (iGaming)' in country_data.columns:
-                    st.metric("iGaming Tax", f"{country_data['Tax (iGaming)'].iloc[0]}%")
+            if tax_columns:
+                cols = st.columns(len(tax_columns))
+                for i, tax_col in enumerate(tax_columns):
+                    with cols[i]:
+                        st.metric(tax_col.replace('_', ' ').title(), 
+                                  f"{country_data[tax_col].iloc[0]}%")
             
             # Gaming types regulation status
-            st.subheader("Gaming Types")
-            for game_type in ["Casino", "iGaming", "Betting", "iBetting"]:
-                if game_type in country_data.columns:
+            game_types = [col for col in ["Casino", "iGaming", "Betting", "iBetting"] 
+                          if col in country_data.columns]
+            
+            if game_types:
+                st.subheader("Gaming Types")
+                for game_type in game_types:
                     st.markdown(f"**{game_type}:** {country_data[game_type].iloc[0]}")
+                    
+            # Responsible gambling info if available
+            rg_measures = [col for col in ['Stake_limit', 'Deposit_limit', 'Withdrawal_limit'] 
+                           if col in country_data.columns]
+            
+            if rg_measures:
+                st.subheader("Responsible Gambling Measures")
+                for measure in rg_measures:
+                    if pd.notna(country_data[measure].iloc[0]):
+                        st.markdown(f"**{measure.replace('_', ' ').title()}:** {country_data[measure].iloc[0]}")
         
         with col2:
-            # Create a bar chart comparing with regional average
-            st.subheader("Comparison with Regional Average")
-            
-            region = country_data['Market_region'].iloc[0]
-            region_data = filtered_df[filtered_df['Market_region'] == region]
-            
-            # Prepare data for comparison
-            tax_columns = ['Operator_tax', 'Player_tax', 'Tax (iGaming)']
-            tax_columns = [col for col in tax_columns if col in filtered_df.columns]
-            
-            comparison_data = []
-            for tax in tax_columns:
-                country_val = country_data[tax].iloc[0]
-                region_avg = region_data[tax].mean()
+            # Additional information section
+            if 'Notes' in country_data.columns and pd.notna(country_data['Notes'].iloc[0]):
+                st.subheader("Notes")
+                st.write(country_data['Notes'].iloc[0])
                 
-                comparison_data.append({
-                    'Metric': tax.replace('_', ' ').title(),
-                    f'{selected_country}': country_val,
-                    f'{region} Average': region_avg
-                })
+            if 'Triggering reviews' in country_data.columns and pd.notna(country_data['Triggering reviews'].iloc[0]):
+                st.subheader("Triggering Reviews")
+                st.write(country_data['Triggering reviews'].iloc[0])
             
-            comparison_df = pd.DataFrame(comparison_data)
+            # Create a bar chart comparing with regional average if tax data exists
+            tax_columns = [col for col in ['Operator_tax', 'Player_tax', 'Tax (iGaming)'] 
+                           if col in country_data.columns]
             
-            # Reshape for plotting
-            plot_df = pd.melt(
-                comparison_df, 
-                id_vars=['Metric'], 
-                value_vars=[f'{selected_country}', f'{region} Average'],
-                var_name='Entity', 
-                value_name='Tax Rate (%)'
-            )
-            
-            fig = px.bar(
-                plot_df, 
-                x='Metric', 
-                y='Tax Rate (%)', 
-                color='Entity',
-                barmode='group',
-                title=f"Tax Comparison with {region} Average"
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
+            if tax_columns:
+                st.subheader("Comparison with Regional Average")
+                
+                region = country_data['Market_region'].iloc[0]
+                region_data = filtered_df[filtered_df['Market_region'] == region]
+                
+                # Prepare data for comparison
+                comparison_data = []
+                for tax in tax_columns:
+                    country_val = country_data[tax].iloc[0]
+                    region_avg = region_data[tax].mean()
+                    
+                    comparison_data.append({
+                        'Metric': tax.replace('_', ' ').title(),
+                        f'{selected_country}': country_val,
+                        f'{region} Average': region_avg
+                    })
+                
+                comparison_df = pd.DataFrame(comparison_data)
+                
+                # Reshape for plotting
+                plot_df = pd.melt(
+                    comparison_df, 
+                    id_vars=['Metric'], 
+                    value_vars=[f'{selected_country}', f'{region} Average'],
+                    var_name='Entity', 
+                    value_name='Tax Rate (%)'
+                )
+                
+                fig = px.bar(
+                    plot_df, 
+                    x='Metric', 
+                    y='Tax Rate (%)', 
+                    color='Entity',
+                    barmode='group',
+                    title=f"Tax Comparison with {region} Average"
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
             
             # Player accounts if available
-            if 'Accounts_#' in country_data.columns:
+            if 'Accounts_#' in country_data.columns and pd.notna(country_data['Accounts_#'].iloc[0]):
                 if country_data['Accounts_#'].iloc[0] > 0:
                     st.metric("Registered Player Accounts", f"{int(country_data['Accounts_#'].iloc[0]):,}")
             
             # Growth rate if available
-            if 'GGR CAGR' in country_data.columns:
+            if 'GGR CAGR' in country_data.columns and pd.notna(country_data['GGR CAGR'].iloc[0]):
                 st.metric("Growth Rate (CAGR)", f"{country_data['GGR CAGR'].iloc[0]}%")
+            
+            # Additional boolean fields
+            boolean_fields = [col for col in ['Offshore?', 'Residents?'] 
+                              if col in country_data.columns]
+            
+            if boolean_fields:
+                st.subheader("Additional Information")
+                for field in boolean_fields:
+                    st.markdown(f"**{field.replace('?', '')}:** {country_data[field].iloc[0]}")
         
         # Link to dashboard
         st.markdown("---")
