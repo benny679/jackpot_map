@@ -29,7 +29,7 @@ def load_data():
         # Connect to the spreadsheet
         gc = gspread.authorize(credentials)
         sheet = gc.open_by_key('1SihEq-fymsko-2vr1NTaNG6NNTC_gBf9OMnI2pUmFEo')
-        worksheet = sheet.worksheet("Sheet1")  # Change this to your actual sheet name
+        worksheet = sheet.worksheet("Tax")  # Change this to your actual sheet name
         
         # Get all data and convert to DataFrame
         data = worksheet.get_all_records()
