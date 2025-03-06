@@ -29,62 +29,77 @@ def load_data():
             st.error("Worksheet is empty")
             return pd.DataFrame()
             
-        # Get headers (first row)
-        headers = all_values[0]
+        # Examine the first few rows to find the actual header row
+        st.write("First rows of data:", all_values[:5])
         
-        # Print headers for debugging
-        st.write("Original headers:", headers)
+        # Let the user select which row contains the real headers
+        header_row = st.selectbox(
+            "Select which row contains the column headers:",
+            options=list(range(min(5, len(all_values)))),
+            format_func=lambda x: f"Row {x+1}: {all_values[x][:3]}..."
+        )
         
-        # Check for duplicate headers
-        if len(headers) != len(set(headers)):
-            st.warning("Duplicate column headers detected. Renaming duplicate columns.")
-            
-            # Find and rename duplicate headers
+        # Get complete headers from the selected row
+        headers = all_values[header_row]
+        st.write("Selected headers:", headers)
+        
+        # Get the data rows (everything after the header row)
+        data_rows = all_values[header_row+1:]
+        
+        # Clean up headers - replace empty strings with column indices
+        cleaned_headers = []
+        for i, header in enumerate(headers):
+            if header.strip() == "":
+                cleaned_headers.append(f"Column_{i}")
+            else:
+                cleaned_headers.append(header.strip())
+        
+        # Check for duplicate headers after cleaning
+        if len(cleaned_headers) != len(set(cleaned_headers)):
+            st.warning("Duplicate column headers detected. Renaming duplicates.")
             seen = {}
-            for i, h in enumerate(headers):
+            unique_headers = []
+            for h in cleaned_headers:
                 if h in seen:
-                    headers[i] = f"{h}_{seen[h]}"
+                    unique_headers.append(f"{h}_{seen[h]}")
                     seen[h] += 1
                 else:
+                    unique_headers.append(h)
                     seen[h] = 1
+            cleaned_headers = unique_headers
         
-        # Create DataFrame with properly named columns
-        df = pd.DataFrame(all_values[1:], columns=headers)
+        # Create DataFrame
+        df = pd.DataFrame(data_rows, columns=cleaned_headers)
         
-        # Convert numeric columns to appropriate types
-        numeric_cols = ['Operator_tax', 'Player_tax', 'Tax (iGaming)', 'GGR CAGR', 'Accounts_#']
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+        # Identify key columns for mapping
+        st.write("Available columns:", cleaned_headers)
         
-        # Clean up column names (strip whitespace, handle case sensitivity)
-        df.columns = [col.strip() for col in df.columns]
+        # Let user select which columns to use for key fields
+        col1, col2 = st.columns(2)
+        with col1:
+            country_col = st.selectbox(
+                "Select the column that contains country names:",
+                options=cleaned_headers,
+                index=0
+            )
         
-        # Check if expected columns exist, map to standard names if needed
-        column_mapping = {}
+        with col2:
+            region_col = st.selectbox(
+                "Select the column that contains region information:",
+                options=cleaned_headers,
+                index=min(1, len(cleaned_headers)-1)
+            )
         
-        # Check for Market_region variations
-        if 'Market_region' not in df.columns:
-            # Try to find similar columns
-            possible_matches = [col for col in df.columns if 'market' in col.lower() or 'region' in col.lower()]
-            if possible_matches:
-                st.info(f"Using '{possible_matches[0]}' as Market region column")
-                column_mapping[possible_matches[0]] = 'Market_region'
-            else:
-                # If no market region column found, create a default value
-                df['Market_region'] = 'Unknown'
-                st.warning("No Market region column found. Using 'Unknown' as default value.")
+        # Map selected columns to standard names
+        df = df.rename(columns={
+            country_col: "Country_region",
+            region_col: "Market_region"
+        })
         
-        # Check for Country_region variations
-        if 'Country_region' not in df.columns:
-            possible_matches = [col for col in df.columns if 'country' in col.lower()]
-            if possible_matches:
-                st.info(f"Using '{possible_matches[0]}' as Country region column")
-                column_mapping[possible_matches[0]] = 'Country_region'
-        
-        # Apply mapping if needed
-        if column_mapping:
-            df = df.rename(columns=column_mapping)
+        # Convert numeric columns - try to identify tax columns
+        tax_cols = [col for col in df.columns if "tax" in col.lower() or "iGaming" in col]
+        for col in tax_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
             
         st.write("Final columns:", list(df.columns))
         
