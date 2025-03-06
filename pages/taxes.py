@@ -1,3 +1,9 @@
+
+import pandas as pd
+import plotly.express as px
+import gspread
+from google.oauth2 import service_account
+
 # Add this at the beginning of your script, after the imports
 def connect_to_jackpots(country=None):
     """
@@ -51,10 +57,6 @@ def connect_to_jackpots(country=None):
     except Exception as e:
         st.error(f"Error connecting to jackpot data: {e}")
         return pd.DataFrame()  # Return empty DataFrame on errorimport streamlit as st
-import pandas as pd
-import plotly.express as px
-import gspread
-from google.oauth2 import service_account
 
 # Function to load data from Google Sheet
 @st.cache_data(ttl=600)  # Cache data for 10 minutes
