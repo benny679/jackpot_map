@@ -137,6 +137,27 @@ def create_matplotlib_plot(filtered_df, level_columns, casino, game, region):
     plt.tight_layout()
     return fig
 
+def create_streamlit_charts(filtered_df, level_columns, casino, game, region):
+    """Create interactive charts using Streamlit's native chart functionality."""
+    # Set datetime as index for proper time-series plotting
+    plot_df = filtered_df.set_index("DateTime").copy()
+    
+    # Fill NaN values with 0 for display
+    plot_df = plot_df.fillna(0)
+    
+    # Create a dictionary to store chart renderers
+    chart_renderers = {}
+    
+    # Create a chart for each level
+    for level in level_columns:
+        # Create a dataframe with just this level
+        level_df = plot_df[[level]]
+        
+        # Store a function that will render this chart
+        chart_renderers[level] = (level_df, f"{casino} - {game} - {level}")
+    
+    return chart_renderers
+
 # Main app code
 def main():
     # Check if the user is authenticated
@@ -170,6 +191,20 @@ def main():
         # Sidebar filters
         st.sidebar.header("Filters")
         
+        # Add a plot type selector to the sidebar
+        plot_type = st.sidebar.radio(
+            "Chart Type",
+            ["Matplotlib", "Interactive"],
+            index=0,
+            help="Select the chart type to visualize your data"
+        )
+
+        # Store the plot type in session state
+        if 'plot_type' not in st.session_state:
+            st.session_state.plot_type = plot_type
+        else:
+            st.session_state.plot_type = plot_type
+            
         # Date range selection
         st.sidebar.subheader("Date Range")
         
@@ -219,6 +254,7 @@ def main():
         if 'plot_generated' not in st.session_state:
             st.session_state.plot_generated = False
             st.session_state.current_plot = None
+            st.session_state.interactive_charts = None
             st.session_state.plot_settings = {
                 'casino': None,
                 'game': None,
@@ -267,13 +303,32 @@ def main():
                         selected_game, 
                         selected_region
                     )
+                    
+                    # Generate and store interactive charts
+                    st.session_state.interactive_charts = create_streamlit_charts(
+                        filtered_df, 
+                        level_columns, 
+                        selected_casino, 
+                        selected_game, 
+                        selected_region
+                    )
+                    
                     st.session_state.plot_generated = True
         
         # Display plot if available
-        if st.session_state.plot_generated and st.session_state.current_plot:
+        if st.session_state.plot_generated:
+            st.subheader(f"Level Values for {st.session_state.plot_settings['casino']} - {st.session_state.plot_settings['game']} - {st.session_state.plot_settings['region']}")
+            
             try:
-                st.subheader(f"Level Values for {st.session_state.plot_settings['casino']} - {st.session_state.plot_settings['game']} - {st.session_state.plot_settings['region']}")
-                st.pyplot(st.session_state.current_plot)
+                if st.session_state.plot_type == "Matplotlib" and st.session_state.current_plot is not None:
+                    # Display the Matplotlib plot
+                    st.pyplot(st.session_state.current_plot)
+                elif st.session_state.plot_type == "Interactive" and st.session_state.interactive_charts is not None:
+                    # Display interactive charts
+                    for level, (level_df, title) in st.session_state.interactive_charts.items():
+                        st.subheader(title)
+                        st.line_chart(level_df, use_container_width=True)
+                        st.write("---")  # Add a separator between charts
             except Exception as e:
                 st.error(f"Error displaying chart: {str(e)}")
                 
@@ -306,60 +361,64 @@ def main():
                 )
             
             with col2:
-                # Save image functionality
+                # Save image functionality - only available for Matplotlib
                 if st.button("Export to Slack"):
                     try:
                         # Create temp file with proper extension
                         temp_dir = tempfile.gettempdir()
                         plot_file = os.path.join(temp_dir, "manual_tracking_plot.png")
                         
-                        # Save the plot
-                        st.session_state.current_plot.savefig(
-                            plot_file,
-                            bbox_inches='tight',
-                            dpi=300,
-                            facecolor='white',
-                            edgecolor='none'
-                        )
-                        
-                        st.info(f"Sending plot to Slack channel...")
-                        
-                        # Set environment variables explicitly before upload
-                        if 'slack' in st.secrets:
-                            os.environ['SLACK_TOKEN'] = st.secrets.slack.slack_token
-                            os.environ['SLACK_CHANNEL_ID'] = st.secrets.slack.channel_id
-                        
-                        # Print info about the file being uploaded
-                        if os.path.exists(plot_file):
-                            st.write(f"File exists with size: {os.path.getsize(plot_file)} bytes")
-                        else:
-                            st.error(f"File was not created properly at {plot_file}")
-                            return
-                        
-                        # Upload to Slack with detailed error handling
-                        try:
-                            upload_success = upload_to_slack(plot_file, slack_message)
-                            if upload_success:
-                                st.success("Plot uploaded to Slack successfully!")
+                        # Save the matplotlib plot (always use matplotlib for export)
+                        if st.session_state.current_plot is not None:
+                            st.session_state.current_plot.savefig(
+                                plot_file,
+                                bbox_inches='tight',
+                                dpi=300,
+                                facecolor='white',
+                                edgecolor='none'
+                            )
+                            
+                            st.info(f"Sending plot to Slack channel...")
+                            
+                            # Set environment variables explicitly before upload
+                            if 'slack' in st.secrets:
+                                os.environ['SLACK_TOKEN'] = st.secrets.slack.slack_token
+                                os.environ['SLACK_CHANNEL_ID'] = st.secrets.slack.channel_id
+                            
+                            # Print info about the file being uploaded
+                            if os.path.exists(plot_file):
+                                st.write(f"File exists with size: {os.path.getsize(plot_file)} bytes")
                             else:
-                                st.error("Failed to upload plot to Slack. Check debug info for details.")
-                        except Exception as e:
-                            st.error(f"Error during Slack upload: {str(e)}")
+                                st.error(f"File was not created properly at {plot_file}")
+                                return
+                            
+                            # Upload to Slack with detailed error handling
+                            try:
+                                upload_success = upload_to_slack(plot_file, slack_message)
+                                if upload_success:
+                                    st.success("Plot uploaded to Slack successfully!")
+                                else:
+                                    st.error("Failed to upload plot to Slack. Check debug info for details.")
+                            except Exception as e:
+                                st.error(f"Error during Slack upload: {str(e)}")
+                        else:
+                            st.error("No Matplotlib plot available to export.")
                     except Exception as e:
                         st.error(f"Error preparing plot for upload: {str(e)}")
             
-            # Add download option for the plot
+            # Add download option for the plot - only available for Matplotlib
             try:
-                buf = io.BytesIO()
-                st.session_state.current_plot.savefig(buf, format="png", bbox_inches='tight', dpi=300)
-                buf.seek(0)
-                
-                st.download_button(
-                    label="Download Plot as PNG",
-                    data=buf,
-                    file_name=f"manual_tracking_{st.session_state.plot_settings['casino']}_{st.session_state.plot_settings['game']}_{st.session_state.plot_settings['region']}.png",
-                    mime="image/png"
-                )
+                if st.session_state.current_plot is not None:
+                    buf = io.BytesIO()
+                    st.session_state.current_plot.savefig(buf, format="png", bbox_inches='tight', dpi=300)
+                    buf.seek(0)
+                    
+                    st.download_button(
+                        label="Download Plot as PNG",
+                        data=buf,
+                        file_name=f"manual_tracking_{st.session_state.plot_settings['casino']}_{st.session_state.plot_settings['game']}_{st.session_state.plot_settings['region']}.png",
+                        mime="image/png"
+                    )
             except Exception as e:
                 st.error(f"Error preparing download: {str(e)}")
         
