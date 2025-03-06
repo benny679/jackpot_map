@@ -376,16 +376,26 @@ def create_interactive_ev_added_chart(df, start_date=None, end_date=None):
     # Filter by date range
     filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
     
+    # Create a debug printout to see if we have data
+    st.write(f"Debug: Found {len(filtered_df)} rows in date range")
+    st.write(f"Debug: Sum of EV Added is {filtered_df['EV Added'].sum()}")
+    
     # Check if we have any data to plot
-    if filtered_df.empty or filtered_df['EV Added'].sum() == 0:
-        st.warning("No EV Added data to display for the selected date range.")
+    if filtered_df.empty:
+        st.warning("No data to display for the selected date range.")
         return None
     
+    # Instead of checking sum, let's make sure we properly convert data
     # Prepare data for Altair
     plot_data = filtered_df[['Week Commencing', 'EV Added']].copy()
     
     # Explicitly make sure values are numeric and replace NaN with 0
-    plot_data['EV Added'] = pd.to_numeric(plot_data['EV Added'], errors='coerce').fillna(0)
+    # IMPORTANT: Convert to float64 explicitly to ensure proper handling
+    plot_data['EV Added'] = pd.to_numeric(plot_data['EV Added'], errors='coerce').astype('float64').fillna(0)
+    
+    # If all values are still zero after conversion, warn but still show chart
+    if plot_data['EV Added'].sum() == 0:
+        st.warning("All EV Added values are zero for the selected date range.")
     
     # Create a base chart
     base = alt.Chart(plot_data).encode(
@@ -393,7 +403,7 @@ def create_interactive_ev_added_chart(df, start_date=None, end_date=None):
                 axis=alt.Axis(format='%d %b %y', labelAngle=-45))
     )
     
-    # Create area chart
+    # Create area chart (now with explicit type definition)
     area = base.mark_area(
         color='goldenrod',
         opacity=0.6
@@ -405,24 +415,24 @@ def create_interactive_ev_added_chart(df, start_date=None, end_date=None):
         ]
     )
     
-    # Add line 
+    # Add line (with explicit type definition)
     line = base.mark_line(color='black', strokeWidth=2).encode(
-        y='EV Added:Q'
+        y=alt.Y('EV Added:Q')
     )
     
-    # Add points
+    # Add points (with explicit type definition)
     points = base.mark_circle(color='black', size=60).encode(
-        y='EV Added:Q'
+        y=alt.Y('EV Added:Q')
     )
     
-    # Combine charts and configure
+    # Combine charts and configure with fixed width instead of container
     chart = alt.layer(area, line, points).properties(
         title=alt.TitleParams(
             text='EV Added Over Time',
             fontSize=16
         ),
         height=400,
-        width='container'
+        width=800  # Fixed width instead of 'container'
     ).interactive()
     
     return chart
