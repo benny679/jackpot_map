@@ -56,12 +56,27 @@ def load_manual_tracking_data():
             # Replace invalid time formats with 00:00
             df.loc[~df["Time"].str.match(r"\d{2}:\d{2}").fillna(False), "Time"] = "00:00"
             
-            # Create datetime column
-            df["DateTime"] = pd.to_datetime(
-                df["Date"] + " " + df["Time"], 
-                format="%d-%m-%Y %H:%M", 
-                errors='coerce'
-            )
+            # Create datetime column - try multiple date formats
+            try:
+                df["DateTime"] = pd.to_datetime(
+                    df["Date"] + " " + df["Time"], 
+                    format="%d-%m-%Y %H:%M", 
+                    errors='coerce'
+                )
+            except:
+                try:
+                    # Try alternative format
+                    df["DateTime"] = pd.to_datetime(
+                        df["Date"] + " " + df["Time"], 
+                        format="%Y-%m-%d %H:%M", 
+                        errors='coerce'
+                    )
+                except:
+                    # Last resort - let pandas infer format
+                    df["DateTime"] = pd.to_datetime(
+                        df["Date"] + " " + df["Time"], 
+                        errors='coerce'
+                    )
             
             # Drop rows with missing dates
             df.dropna(subset=["DateTime"], inplace=True)
@@ -231,6 +246,24 @@ def main():
                 
                 # Option to upload to Slack
                 st.subheader("Share Plot")
+                
+                # Add debug button
+                if st.checkbox("Debug Slack Settings"):
+                    st.write("Slack configuration debug information:")
+                    
+                    # Check if slack config exists in secrets
+                    if 'slack' in st.secrets:
+                        st.write("✅ Slack section found in secrets")
+                        st.write("- Token status:", "Available" if st.secrets.slack.get("slack_token") else "Missing")
+                        st.write("- Channel status:", "Available" if st.secrets.slack.get("channel_id") else "Missing")
+                        
+                        # Check environment variables
+                        st.write("Environment variables:")
+                        st.write("- SLACK_TOKEN:", "Set" if os.environ.get('SLACK_TOKEN') else "Not set")
+                        st.write("- SLACK_CHANNEL_ID:", "Set" if os.environ.get('SLACK_CHANNEL_ID') else "Not set")
+                    else:
+                        st.write("❌ No slack section found in secrets.toml")
+                    
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     slack_message = st.text_input(
@@ -239,22 +272,66 @@ def main():
                     )
                 with col2:
                     if st.button("Upload to Slack"):
-                        # Save plot to a temporary file
-                        plot_file = "manual_tracking_plot.png"
-                        plot.savefig(
-                            plot_file,
-                            bbox_inches='tight',
-                            dpi=300,
-                            facecolor='white',
-                            edgecolor='none'
-                        )
-                        
-                        # Upload to Slack
-                        upload_success = upload_to_slack(plot_file, slack_message)
-                        if upload_success:
-                            st.success("Plot uploaded to Slack successfully!")
-                        else:
-                            st.error("Failed to upload plot to Slack.")
+                        try:
+                            # Create a copy of the figure to avoid closing the displayed plot
+                            import matplotlib.pyplot as plt
+                            from matplotlib.figure import Figure
+                            
+                            # Save plot to a temporary file with absolute path
+                            import tempfile
+                            import os
+                            
+                            # Create temp file with proper extension
+                            temp_dir = tempfile.gettempdir()
+                            plot_file = os.path.join(temp_dir, "manual_tracking_plot.png")
+                            
+                            # Create a new figure with the same size
+                            fig_copy = Figure(figsize=plot.get_size_inches())
+                            
+                            # Save the original figure without closing it
+                            plot.savefig(
+                                plot_file,
+                                bbox_inches='tight',
+                                dpi=300,
+                                facecolor='white',
+                                edgecolor='none'
+                            )
+                            
+                            st.info(f"Sending plot to Slack channel... (from {plot_file})")
+                            
+                            # Debug Slack credentials
+                            if 'slack' in st.secrets:
+                                st.write("Slack credentials found in secrets")
+                                # Set environment variables explicitly before upload
+                                os.environ['SLACK_TOKEN'] = st.secrets.slack.slack_token
+                                os.environ['SLACK_CHANNEL_ID'] = st.secrets.slack.channel_id
+                            else:
+                                st.error("No Slack credentials found in secrets")
+                            
+                            # Upload to Slack with detailed error handling
+                            try:
+                                upload_success = upload_to_slack(plot_file, slack_message)
+                                if upload_success:
+                                    st.success("Plot uploaded to Slack successfully!")
+                                else:
+                                    st.error("Failed to upload plot to Slack.")
+                            except Exception as e:
+                                st.error(f"Error during Slack upload: {str(e)}")
+                        except Exception as e:
+                            st.error(f"Error preparing plot for upload: {str(e)}")
+                
+                # Add direct download option for the plot
+                import io
+                buf = io.BytesIO()
+                plot.savefig(buf, format="png", bbox_inches='tight', dpi=300)
+                buf.seek(0)
+                
+                st.download_button(
+                    label="Download Plot",
+                    data=buf,
+                    file_name=f"manual_tracking_{selected_casino}_{selected_game}_{selected_region}.png",
+                    mime="image/png"
+                )
         
         # Display raw data
         st.subheader("Raw Data")
