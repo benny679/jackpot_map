@@ -628,17 +628,20 @@ if st.session_state.selected_country:
                 with col1:
                     # Tax information in metrics
                     st.subheader("Tax Rates")
-                    st.write(f"{Operator_tax}")
                     
-                    tax_cols = [col for col in ['Operator_tax', 'Player_tax'] if col in country_data.columns]
-                    if tax_cols:
-                        for tax_col in tax_cols:
-                            if pd.notna(country_data[tax_col].iloc[0]):
-                                st.metric(
-                                    tax_col.replace('_', ' ').title(), 
-                                    f"{country_data[tax_col].iloc[0]}%"
-                                )
-                    
+                    # Display Player Tax only
+                    if 'Player_tax' in country_data.columns and pd.notna(country_data['Player_tax'].iloc[0]):
+                        player_tax_value = country_data['Player_tax'].iloc[0]
+                        st.metric(
+                            "Player Tax", 
+                            f"{player_tax_value}%"
+                        )
+                        
+                        # Add a more detailed explanation of the player tax
+                        st.write(f"**Player Tax Details:** The player tax rate for {st.session_state.selected_country} is {player_tax_value}%. This is the tax applied to players on their gambling winnings.")
+                    else:
+                        st.info("No player tax data available for this country.")
+                                
                     # Player accounts if available
                     if 'Accounts_#' in country_data.columns and pd.notna(country_data['Accounts_#'].iloc[0]):
                         try:
