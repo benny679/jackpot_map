@@ -23,38 +23,78 @@ def load_data():
         sheet = gc.open("Research - Summary")  # Open by exact name
         worksheet = sheet.worksheet("Tax")  # Use the Tax worksheet
         
-        st.info("Connected to Google Sheet. Trying to process the data...")
+        st.info("Connected to Google Sheet. Processing data...")
         
-        # Get all data using get_all_records with explicit expected headers
-        expected_headers = [
-            "Country_region", "Market_region", "GGR CAGR", "Regulated", 
-            "Regulation_type", "Offshore?", "Residents?", "Casino", 
-            "iGaming", "Betting", "iBetting", "Operator_tax", 
-            "Player_tax", "Accounts_#", "Stake_limit", "Deposit_limit", 
-            "Withdrawal_limit", "Priority region", "Triggering reviews", "Notes", 
-            "Legality/Regulation", "Tax (iGaming)", "Responsible Gambling (iGaming)"
-        ]
+        # Get all values
+        all_values = worksheet.get_all_values()
         
-        try:
-            # Try with explicit headers
-            data = worksheet.get_all_records(expected_headers=expected_headers)
-            df = pd.DataFrame(data)
-            st.success("Successfully loaded data with expected headers!")
-        except Exception as e:
-            st.warning(f"Couldn't load with expected headers: {e}")
+        if len(all_values) < 3:  # Need at least 2 header rows and 1 data row
+            st.error("Not enough rows in the sheet")
+            return pd.DataFrame()
+        
+        # Get the first two rows as headers
+        header_row1 = all_values[0]
+        header_row2 = all_values[1]
+        
+        # Combine the two rows to create complete headers
+        combined_headers = []
+        for i in range(len(header_row1)):
+            if i < len(header_row2):
+                # Combine non-empty values from both rows
+                header1 = header_row1[i].strip()
+                header2 = header_row2[i].strip()
+                
+                if header1 and header2:
+                    combined_headers.append(f"{header1} - {header2}")
+                elif header1:
+                    combined_headers.append(header1)
+                elif header2:
+                    combined_headers.append(header2)
+                else:
+                    combined_headers.append(f"Column_{i}")
+            else:
+                # Handle case where row2 is shorter than row1
+                combined_headers.append(header_row1[i].strip() or f"Column_{i}")
+        
+        # Check for empty or duplicate headers and fix them
+        cleaned_headers = []
+        seen = {}
+        
+        for i, header in enumerate(combined_headers):
+            if not header or header == "":
+                cleaned_headers.append(f"Column_{i}")
+            elif header in seen:
+                cleaned_headers.append(f"{header}_{seen[header]}")
+                seen[header] += 1
+            else:
+                cleaned_headers.append(header)
+                seen[header] = 1
+        
+        # Use data starting from row 3
+        data_rows = all_values[2:]
+        
+        # Create DataFrame
+        df = pd.DataFrame(data_rows, columns=cleaned_headers)
+        
+        # Find and rename key columns to standard names
+        column_mapping = {}
+        
+        # Look for Country_region column or equivalent
+        country_col = next((col for col in df.columns if "country" in col.lower() and "region" in col.lower()), None)
+        if country_col and country_col != "Country_region":
+            column_mapping[country_col] = "Country_region"
             
-            # Fallback: Get all values and use first row as headers
-            all_values = worksheet.get_all_values()
-            headers = all_values[0]
-            data_values = all_values[1:]
-            
-            # Create DataFrame
-            df = pd.DataFrame(data_values, columns=headers)
-            
-            # Check if we have Country_region and Market_region columns
-            if "Country_region" not in df.columns or "Market_region" not in df.columns:
-                st.error("Critical columns missing from data. Please check your Google Sheet.")
-                st.write("Available columns:", df.columns.tolist())
+        # Look for Market_region column or equivalent
+        market_col = next((col for col in df.columns if "market" in col.lower() and "region" in col.lower()), None)
+        if market_col and market_col != "Market_region":
+            column_mapping[market_col] = "Market_region"
+        
+        # Apply mapping if needed
+        if column_mapping:
+            df = df.rename(columns=column_mapping)
+        
+        # Log the columns we found
+        st.write("Found columns:", df.columns.tolist())
         
         # Convert numeric columns
         numeric_cols = ["GGR CAGR", "Operator_tax", "Player_tax", "Accounts_#", "Tax (iGaming)"]
