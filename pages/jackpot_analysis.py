@@ -14,6 +14,7 @@ import numpy as np
 import seaborn as sns
 from scipy import stats
 import io
+import os
 
 from utils.auth import check_password, logout, initialize_session_state
 from utils.ip_manager import log_ip_activity
@@ -38,42 +39,92 @@ st.set_page_config(
 # Initialize session state variables
 initialize_session_state()
 
+# Function to generate realistic mock data for testing
+def generate_mock_data(days=100, seed=None):
+    """Generate realistic jackpot data for testing."""
+    if seed is not None:
+        np.random.seed(seed)
+        
+    # Create date range
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+    dates = pd.date_range(start=start_date, end=end_date, periods=days)
+    
+    # Create base amount with growth trend
+    base_amount = 5000
+    growth_rate = 0.02  # 2% average daily growth
+    trend = np.cumprod(np.random.normal(1 + growth_rate, 0.01, days))
+    
+    # Add some volatility
+    volatility = np.random.normal(0, 300, days)
+    
+    # Calculate amounts
+    amounts = base_amount * trend + volatility
+    
+    # Add periodic drops (jackpot wins)
+    num_drops = days // 14  # Approximately one drop every two weeks
+    drop_indices = np.random.choice(range(days), size=num_drops, replace=False)
+    
+    for idx in drop_indices:
+        if idx > 0:  # Skip the first day
+            drop_percentage = np.random.uniform(0.3, 0.7)  # 30-70% drop
+            amounts[idx] = amounts[idx-1] * (1 - drop_percentage)
+    
+    # Create DataFrame
+    df = pd.DataFrame({
+        'ts': dates,
+        'amount': amounts
+    })
+    
+    return df
+
 class JackpotAPI:
     def __init__(self, base_url: str = "https://grnst-data-store-serv.com"):
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
         self.session.verify = False
+        # Set shorter timeout to avoid long waits
+        self.timeout = 5
 
     def test_connection(self) -> bool:
         try:
-            # Use a more specific endpoint if available
-            response = self.session.get(f"{self.base_url}/api/health", timeout=5)
-            if response.status_code == 200:
-                st.success("API connection test successful")
-                logger.info("API connection test successful")
-                return True
-            else:
-                st.warning(f"API returned status code: {response.status_code}")
-                with st.expander("API Response Details"):
-                    st.code(response.text)
-                # Try to proceed anyway
-                return True
-        except requests.exceptions.RequestException as e:
+            # Try different endpoints for health check
+            endpoints = [
+                "/api/health",
+                "/health",
+                "/api/status",
+                "/api/v1/health",
+                "/"  # Fallback to root path
+            ]
+            
+            for endpoint in endpoints:
+                try:
+                    url = f"{self.base_url}{endpoint}"
+                    st.info(f"Testing connection to {url}")
+                    response = self.session.get(url, timeout=self.timeout)
+                    
+                    if response.status_code < 400:  # Accept any 2xx or 3xx status code
+                        st.success(f"API connection successful (endpoint: {endpoint})")
+                        logger.info(f"API connection successful (endpoint: {endpoint})")
+                        return True
+                except Exception as e:
+                    logger.warning(f"Failed to connect to {endpoint}: {str(e)}")
+                    continue
+            
+            st.error("Failed to connect to any API endpoint")
+            return False
+            
+        except Exception as e:
             st.error(f"API connection test failed: {str(e)}")
             logger.error(f"API connection test failed: {str(e)}")
-            
-            # For debugging purposes - provide mock data option
-            if st.checkbox("Use mock data for testing"):
-                st.warning("Using mock data for testing purposes")
-                return True
-                
             return False
 
     def get_timeseries(
         self,
         jackpot_id: str,
         days: Optional[int] = None,
-        return_df: bool = True
+        return_df: bool = True,
+        use_mock_data: bool = False
     ) -> Union[Dict, pd.DataFrame]:
         """
         Fetch jackpot timeseries data.
@@ -82,7 +133,13 @@ class JackpotAPI:
             jackpot_id: Identifier for the jackpot
             days: Number of days of data to fetch (optional)
             return_df: If True, returns pandas DataFrame, else raw JSON
+            use_mock_data: If True, generates mock data instead of API call
         """
+        if use_mock_data:
+            st.info("Using generated mock data instead of API")
+            mock_data = generate_mock_data(days=days or 100, seed=hash(jackpot_id) % 1000)
+            return mock_data
+            
         endpoint = f"{self.base_url}/api/timeseries"
 
         # First try without timespan
@@ -91,7 +148,7 @@ class JackpotAPI:
 
         try:
             with st.spinner(f"Making request to {endpoint}"):
-                response = self.session.post(endpoint, json=payload)
+                response = self.session.post(endpoint, json=payload, timeout=self.timeout)
                 response.raise_for_status()
                 data = response.json()
 
@@ -101,12 +158,17 @@ class JackpotAPI:
                     timespan_ms = days * 24 * 60 * 60 * 1000
                     payload["timespan"] = timespan_ms
 
-                    response = self.session.post(endpoint, json=payload)
+                    response = self.session.post(endpoint, json=payload, timeout=self.timeout)
                     response.raise_for_status()
                     data = response.json()
 
             if return_df:
-                df = pd.DataFrame(data.get("timeseriesData", []))
+                # Check if timeseriesData exists
+                if "timeseriesData" not in data or not data["timeseriesData"]:
+                    st.warning("No timeseries data found in API response")
+                    return pd.DataFrame()
+                    
+                df = pd.DataFrame(data["timeseriesData"])
                 if not df.empty:
                     # Ensure columns exist
                     if 'ts' not in df.columns or 'amount' not in df.columns:
@@ -376,17 +438,30 @@ def main():
         st.title("📊 Jackpot Analysis")
         st.write("Analyze jackpot data and visualize trends.")
         
-        # Advanced options in sidebar
-        st.sidebar.subheader("Advanced Options")
-        api_url = st.sidebar.text_input(
-            "API URL", 
-            value="https://grnst-data-store-serv.com",
-            help="The base URL of the jackpot API"
+        # Add data source selector
+        st.sidebar.subheader("Data Source")
+        data_source = st.sidebar.radio(
+            "Select Data Source",
+            ["API (Real Data)", "Mock Data (Demo)"],
+            index=1,  # Default to mock data since API is not working
+            help="Choose to use real API data or generated mock data"
         )
+        use_mock_data = (data_source == "Mock Data (Demo)")
+        
+        if use_mock_data:
+            st.info("🧪 Using simulated mock data for demonstration purposes")
+        else:
+            # Advanced options for API
+            st.sidebar.subheader("API Settings")
+            api_url = st.sidebar.text_input(
+                "API URL", 
+                value="https://grnst-data-store-serv.com",
+                help="The base URL of the jackpot API"
+            )
         
         # Debugging options for admin users
         if st.session_state.get("user_role") == "admin":
-            st.sidebar.subheader("Debug Options")
+            st.sidebar.subheader("Admin Options")
             debug = st.sidebar.checkbox("Enable Debug Mode", value=False)
             
             if debug:
@@ -398,69 +473,79 @@ def main():
                     plt.switch_backend('Agg')
                     st.sidebar.success(f"Switched to Agg backend")
                     st.experimental_rerun()
-                
-                if st.sidebar.button("Test Simple Plot"):
-                    test_fig, test_ax = plt.subplots()
-                    test_ax.plot([1, 2, 3], [1, 4, 9])
-                    st.sidebar.pyplot(test_fig)
         
         # Input form
         with st.form("jackpot_analysis_form"):
             col1, col2 = st.columns([3, 1])
             
             with col1:
-                jackpot_id = st.text_input(
-                    "Jackpot ID", 
-                    value="feeds-jackpots.s3.amazonaws.com_Ave Caesar_LEAVECAESAR",
-                    help="Enter the jackpot identifier"
-                )
+                if use_mock_data:
+                    jackpot_id = st.text_input(
+                        "Mock Jackpot Name", 
+                        value="Demo_Jackpot_1",
+                        help="Enter a name for the mock jackpot (used as random seed)"
+                    )
+                else:
+                    jackpot_id = st.text_input(
+                        "Jackpot ID", 
+                        value="feeds-jackpots.s3.amazonaws.com_Ave Caesar_LEAVECAESAR",
+                        help="Enter the jackpot identifier"
+                    )
                 
             with col2:
                 days = st.number_input(
                     "Days of Data", 
-                    min_value=1, 
+                    min_value=7, 
                     max_value=365,
-                    value=7,
-                    help="Number of days of data to analyze (if available)"
+                    value=90,
+                    help="Number of days of data to analyze"
                 )
-                
-            # Add option to use mock data for testing
-            use_demo = st.checkbox("Use demo data if API fails", value=True)
                 
             submit_button = st.form_submit_button("Analyze Jackpot")
             
         if submit_button:
             try:
-                analyze_jackpot(jackpot_id, days)
                 # Store the analysis parameters
                 st.session_state["last_jackpot_id"] = jackpot_id
                 st.session_state["last_days"] = days
+                st.session_state["last_used_mock"] = use_mock_data
+                
+                analyze_jackpot(jackpot_id, days, use_mock_data)
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
-                
-                if use_demo:
-                    st.warning("Attempting to use demo data...")
-                    # Create demo data
-                    dates = pd.date_range(start='2020-01-01', periods=100, freq='D')
-                    amounts = np.linspace(1000, 10000, 100) + np.random.normal(0, 500, 100)
-                    # Create drops
-                    for i in range(7, 100, 14):
-                        amounts[i] = amounts[i-1] * 0.7
-                    
-                    # Create plot with demo data
-                    st.subheader("Demo Data Visualization")
-                    demo_fig, demo_ax = plt.subplots(figsize=(10, 6))
-                    demo_ax.plot(dates, amounts)
-                    demo_ax.set_title("Demo Jackpot Data")
-                    st.pyplot(demo_fig)
+                import traceback
+                st.code(traceback.format_exc())
             
         # Display previous analysis if available
         if "last_jackpot_id" in st.session_state and "last_days" in st.session_state:
-            st.subheader("Previous Analysis")
-            st.info(f"Last analyzed: {st.session_state['last_jackpot_id']} (Last {st.session_state['last_days']} days)")
+            with st.expander("Previous Analysis", expanded=False):
+                mock_text = "(Mock Data)" if st.session_state.get("last_used_mock", False) else "(API Data)"
+                st.info(f"Last analyzed: {st.session_state['last_jackpot_id']} - {st.session_state['last_days']} days {mock_text}")
+                
+                if st.button("Rerun Previous Analysis"):
+                    use_mock = st.session_state.get("last_used_mock", use_mock_data)
+                    analyze_jackpot(st.session_state["last_jackpot_id"], st.session_state["last_days"], use_mock)
+        
+        # Additional help section
+        with st.expander("Help & Info"):
+            st.markdown("""
+            ### About the Jackpot Analysis Page
             
-            if st.button("Rerun Previous Analysis"):
-                analyze_jackpot(st.session_state["last_jackpot_id"], st.session_state["last_days"])
+            This page helps you analyze jackpot data and visualize important trends:
+            
+            - **Mock Data Option**: If the API is unavailable, you can still test functionality with realistic mock data
+            - **Time Series Analysis**: See jackpot amounts over time with highlighted drops
+            - **Drop Statistics**: Analyze when and how much jackpots drop
+            
+            ### How to use:
+            1. Select data source (API or Mock Data)
+            2. Enter jackpot ID (or mock name)
+            3. Select the number of days to analyze
+            4. Click "Analyze Jackpot"
+            
+            You can download the analysis results as CSV files for further processing.
+            """)
+            
     else:
         st.warning("Please log in to access the jackpot analysis features.")
 
