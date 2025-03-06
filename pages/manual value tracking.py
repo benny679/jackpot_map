@@ -275,7 +275,7 @@ def main():
             st.pyplot(st.session_state.current_plot)
                 
                 # Option to upload to Slack
-                st.subheader("Share Plot")
+            st.subheader("Share Plot")
                 
                 # Add debug button
                 if st.checkbox("Debug Slack Settings"):
