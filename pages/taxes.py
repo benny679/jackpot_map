@@ -621,88 +621,86 @@ if st.session_state.selected_country:
                     with st.expander("Triggering Reviews"):
                         st.write(country_data['Triggering reviews'].iloc[0])
             
-            # Tax & Market tab
-            with info_tab2:
-                col1, col2 = st.columns([1, 1])
-                
-                with col1:
-                    # Tax information in metrics
-                    st.subheader("Tax Rates")
+                # Tax & Market tab
+                with info_tab2:
+                    col1, col2 = st.columns([1, 1])
                     
-                    # Display Player Tax only
-                    if 'Player_tax' in country_data.columns and pd.notna(country_data['Player_tax'].iloc[0]):
-                        player_tax_value = country_data['Player_tax'].iloc[0]
-                        st.metric(
-                            "Player Tax", 
-                            f"{player_tax_value}%"
-                        )
+                    with col1:
+                        # Tax information in metrics
+                        st.subheader("Tax Rates")
                         
-                        # Add a more detailed explanation of the player tax
-                        st.write(f"**Player Tax Details:** The player tax rate for {st.session_state.selected_country} is {player_tax_value}%. This is the tax applied to players on their gambling winnings.")
-                    else:
-                        st.info("No player tax data available for this country.")
+                        # Display Player Tax only
+                        if 'Player_tax' in country_data.columns and pd.notna(country_data['Player_tax'].iloc[0]):
+                            player_tax_value = country_data['Player_tax'].iloc[0]
+                            st.metric(
+                                "Player Tax", 
+                                f"{player_tax_value}%"
+                            )
+                            
+                            # Add a more detailed explanation of the player tax
+                            st.write(f"**Player Tax Details:** The player tax rate for {st.session_state.selected_country} is {player_tax_value}%. This is the tax applied to players on their gambling winnings.")
+                        else:
+                            st.info("No player tax data available for this country.")
+                        
+                        # Player accounts if available
+                        if 'Accounts_#' in country_data.columns and pd.notna(country_data['Accounts_#'].iloc[0]):
+                            try:
+                                accounts = int(float(country_data['Accounts_#'].iloc[0]))
+                                st.metric("Registered Player Accounts", f"{accounts:,}")
+                            except (ValueError, TypeError):
+                                st.write(f"**Player Accounts:** {country_data['Accounts_#'].iloc[0]}")
+                    
+                    with col2:
+                        # Growth rate if available
+                        if 'GGR CAGR' in country_data.columns and pd.notna(country_data['GGR CAGR'].iloc[0]):
+                            st.metric(
+                                "Growth Rate (CAGR)", 
+                                f"{country_data['GGR CAGR'].iloc[0]}%",
+                                delta=None
+                            )
+                        
+                        # Create a bar chart comparing with regional average for Player Tax only
+                        st.subheader("Player Tax Regional Comparison")
+                        
+                        if 'Player_tax' in country_data.columns and pd.notna(country_data['Player_tax'].iloc[0]) and 'Market_region' in country_data.columns:
+                            region = country_data['Market_region'].iloc[0]
+                            region_data = filtered_df[filtered_df['Market_region'] == region]
+                            
+                            if not region_data.empty and 'Player_tax' in region_data.columns:
+                                country_val = country_data['Player_tax'].iloc[0]
+                                region_avg = region_data['Player_tax'].mean()
                                 
-                    # Player accounts if available
-                    if 'Accounts_#' in country_data.columns and pd.notna(country_data['Accounts_#'].iloc[0]):
-                        try:
-                            accounts = int(float(country_data['Accounts_#'].iloc[0]))
-                            st.metric("Registered Player Accounts", f"{accounts:,}")
-                        except (ValueError, TypeError):
-                            st.write(f"**Player Accounts:** {country_data['Accounts_#'].iloc[0]}")
-                
-                with col2:
-                    # Growth rate if available
-                    if 'GGR CAGR' in country_data.columns and pd.notna(country_data['GGR CAGR'].iloc[0]):
-                        st.metric(
-                            "Growth Rate (CAGR)", 
-                            f"{country_data['GGR CAGR'].iloc[0]}%",
-                            delta=None
-                        )
-                    
-                    # Create a bar chart comparing with regional average if tax data exists
-                    st.subheader("Regional Comparison")
-                    
-                    tax_columns = [col for col in ['Operator_tax', 'Player_tax'] 
-                                if col in country_data.columns and pd.notna(country_data[col].iloc[0])]
-                    
-                    if tax_columns and 'Market_region' in country_data.columns:
-                        region = country_data['Market_region'].iloc[0]
-                        region_data = filtered_df[filtered_df['Market_region'] == region]
-                        
-                        # Prepare data for comparison
-                        comparison_data = []
-                        for tax in tax_columns:
-                            country_val = country_data[tax].iloc[0]
-                            region_avg = region_data[tax].mean()
-                            
-                            comparison_data.append({
-                                'Metric': tax.replace('_', ' ').title(),
-                                f'{st.session_state.selected_country}': country_val,
-                                f'{region} Average': region_avg
-                            })
-                        
-                        if comparison_data:
-                            comparison_df = pd.DataFrame(comparison_data)
-                            
-                            # Reshape for plotting
-                            plot_df = pd.melt(
-                                comparison_df, 
-                                id_vars=['Metric'], 
-                                value_vars=[f'{st.session_state.selected_country}', f'{region} Average'],
-                                var_name='Entity', 
-                                value_name='Tax Rate (%)'
-                            )
-                            
-                            fig = px.bar(
-                                plot_df, 
-                                x='Metric', 
-                                y='Tax Rate (%)', 
-                                color='Entity',
-                                barmode='group',
-                                title=f"Tax Comparison with {region} Average"
-                            )
-                            
-                            st.plotly_chart(fig, use_container_width=True)
+                                comparison_data = [{
+                                    'Metric': 'Player Tax',
+                                    f'{st.session_state.selected_country}': country_val,
+                                    f'{region} Average': region_avg
+                                }]
+                                
+                                comparison_df = pd.DataFrame(comparison_data)
+                                
+                                # Reshape for plotting
+                                plot_df = pd.melt(
+                                    comparison_df, 
+                                    id_vars=['Metric'], 
+                                    value_vars=[f'{st.session_state.selected_country}', f'{region} Average'],
+                                    var_name='Entity', 
+                                    value_name='Tax Rate (%)'
+                                )
+                                
+                                fig = px.bar(
+                                    plot_df, 
+                                    x='Metric', 
+                                    y='Tax Rate (%)', 
+                                    color='Entity',
+                                    barmode='group',
+                                    title=f"Player Tax Comparison with {region} Average"
+                                )
+                                
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.info(f"No regional comparison data available for {region}.")
+                        else:
+                            st.info("Regional comparison data not available.")
             
             # Responsible Gambling tab
             with info_tab3:
