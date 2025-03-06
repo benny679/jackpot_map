@@ -14,7 +14,6 @@ import numpy as np
 import seaborn as sns
 from scipy import stats
 import io
-import os
 
 from utils.auth import check_password, logout, initialize_session_state
 from utils.ip_manager import log_ip_activity
@@ -39,82 +38,20 @@ st.set_page_config(
 # Initialize session state variables
 initialize_session_state()
 
-# Function to generate realistic mock data for testing
-def generate_mock_data(days=100, seed=None):
-    """Generate realistic jackpot data for testing."""
-    if seed is not None:
-        np.random.seed(seed)
-        
-    # Create date range
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=days)
-    dates = pd.date_range(start=start_date, end=end_date, periods=days)
-    
-    # Create base amount with growth trend
-    base_amount = 5000
-    growth_rate = 0.02  # 2% average daily growth
-    trend = np.cumprod(np.random.normal(1 + growth_rate, 0.01, days))
-    
-    # Add some volatility
-    volatility = np.random.normal(0, 300, days)
-    
-    # Calculate amounts
-    amounts = base_amount * trend + volatility
-    
-    # Add periodic drops (jackpot wins)
-    num_drops = days // 14  # Approximately one drop every two weeks
-    drop_indices = np.random.choice(range(days), size=num_drops, replace=False)
-    
-    for idx in drop_indices:
-        if idx > 0:  # Skip the first day
-            drop_percentage = np.random.uniform(0.3, 0.7)  # 30-70% drop
-            amounts[idx] = amounts[idx-1] * (1 - drop_percentage)
-    
-    # Create DataFrame
-    df = pd.DataFrame({
-        'ts': dates,
-        'amount': amounts
-    })
-    
-    return df
-
 class JackpotAPI:
     def __init__(self, base_url: str = "https://grnst-data-store-serv.com"):
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
         self.session.verify = False
-        # Set shorter timeout to avoid long waits
-        self.timeout = 5
 
     def test_connection(self) -> bool:
         try:
-            # Try different endpoints for health check
-            endpoints = [
-                "/api/health",
-                "/health",
-                "/api/status",
-                "/api/v1/health",
-                "/"  # Fallback to root path
-            ]
-            
-            for endpoint in endpoints:
-                try:
-                    url = f"{self.base_url}{endpoint}"
-                    st.info(f"Testing connection to {url}")
-                    response = self.session.get(url, timeout=self.timeout)
-                    
-                    if response.status_code < 400:  # Accept any 2xx or 3xx status code
-                        st.success(f"API connection successful (endpoint: {endpoint})")
-                        logger.info(f"API connection successful (endpoint: {endpoint})")
-                        return True
-                except Exception as e:
-                    logger.warning(f"Failed to connect to {endpoint}: {str(e)}")
-                    continue
-            
-            st.error("Failed to connect to any API endpoint")
-            return False
-            
-        except Exception as e:
+            response = self.session.get(self.base_url)
+            response.raise_for_status()
+            st.success("API connection test successful")
+            logger.info("API connection test successful")
+            return True
+        except requests.exceptions.RequestException as e:
             st.error(f"API connection test failed: {str(e)}")
             logger.error(f"API connection test failed: {str(e)}")
             return False
@@ -123,8 +60,7 @@ class JackpotAPI:
         self,
         jackpot_id: str,
         days: Optional[int] = None,
-        return_df: bool = True,
-        use_mock_data: bool = False
+        return_df: bool = True
     ) -> Union[Dict, pd.DataFrame]:
         """
         Fetch jackpot timeseries data.
@@ -133,13 +69,7 @@ class JackpotAPI:
             jackpot_id: Identifier for the jackpot
             days: Number of days of data to fetch (optional)
             return_df: If True, returns pandas DataFrame, else raw JSON
-            use_mock_data: If True, generates mock data instead of API call
         """
-        if use_mock_data:
-            st.info("Using generated mock data instead of API")
-            mock_data = generate_mock_data(days=days or 100, seed=hash(jackpot_id) % 1000)
-            return mock_data
-            
         endpoint = f"{self.base_url}/api/timeseries"
 
         # First try without timespan
@@ -148,7 +78,9 @@ class JackpotAPI:
 
         try:
             with st.spinner(f"Making request to {endpoint}"):
-                response = self.session.post(endpoint, json=payload, timeout=self.timeout)
+                response = self.session.post(endpoint, json=payload)
+                st.info(f"Response status code: {response.status_code}")
+                
                 response.raise_for_status()
                 data = response.json()
 
@@ -158,23 +90,18 @@ class JackpotAPI:
                     timespan_ms = days * 24 * 60 * 60 * 1000
                     payload["timespan"] = timespan_ms
 
-                    response = self.session.post(endpoint, json=payload, timeout=self.timeout)
+                    response = self.session.post(endpoint, json=payload)
                     response.raise_for_status()
                     data = response.json()
 
             if return_df:
-                # Check if timeseriesData exists
-                if "timeseriesData" not in data or not data["timeseriesData"]:
-                    st.warning("No timeseries data found in API response")
-                    return pd.DataFrame()
-                    
-                df = pd.DataFrame(data["timeseriesData"])
+                df = pd.DataFrame(data.get("timeseriesData", []))
                 if not df.empty:
-                    # Ensure columns exist
+                    # Check if we have the expected columns
                     if 'ts' not in df.columns or 'amount' not in df.columns:
-                        st.error("Expected columns 'ts' and 'amount' not found in response")
+                        st.error("Expected 'ts' and 'amount' columns not found in response")
                         return pd.DataFrame()
-                    
+                        
                     # Ensure amount is numeric
                     df['amount'] = pd.to_numeric(df['amount'])
                     df['ts'] = pd.to_datetime(df['ts'], unit='ms')
@@ -219,47 +146,25 @@ def analyze_jackpot(jackpot_id: str, days: Optional[int] = None) -> None:
         return
 
     try:
-        # Create a flag for using mock data
-        use_mock_data = False
-        
         with st.spinner("Fetching jackpot data..."):
             ts_data = api.get_timeseries(
                 jackpot_id=jackpot_id,
                 days=days,
                 return_df=True
             )
-            
-            # Check if data is empty and offer mock data option
-            if ts_data.empty:
-                st.warning("No data returned from API")
-                if st.checkbox("Generate mock data for testing?"):
-                    st.info("Creating mock data for visualization testing")
-                    # Create mock time series data
-                    dates = pd.date_range(start='2020-01-01', periods=100, freq='D')
-                    amounts = np.linspace(1000, 10000, 100) + np.random.normal(0, 500, 100)
-                    # Create sharp drops every ~14 days
-                    for i in range(7, 100, 14):
-                        amounts[i] = amounts[i-1] * 0.7  # 30% drop
-                    
-                    ts_data = pd.DataFrame({
-                        'ts': dates,
-                        'amount': amounts
-                    })
-                    use_mock_data = True
-        
+
         if not ts_data.empty:
-            if use_mock_data:
-                st.success("Using mock data for visualization testing")
-            else:
-                st.success(f"Successfully retrieved data for {jackpot_id}")
             st.success(f"Successfully retrieved data for {jackpot_id}")
+            
+            # Initialize plots
+            style.use('ggplot')
             
             # Filter for specific start date
             ts_data = ts_data[ts_data['ts'] >= datetime(2020, 1, 1)]
             if ts_data.empty:
                 st.warning("No data available after January 1, 2020")
                 return
-                
+            
             # Find significant drops in the data
             ts_data['diff'] = ts_data['amount'].diff()
             ts_data['diff_pct'] = ts_data['amount'].pct_change()
@@ -269,81 +174,57 @@ def analyze_jackpot(jackpot_id: str, days: Optional[int] = None) -> None:
 
             # Filter for significant drops
             significant_drops = ts_data[ts_data['significant_drop']]
-            significant_drops['previous_amount'] = previous_values[ts_data['significant_drop']]
-
             if significant_drops.empty:
                 st.warning("No significant drops found in the data")
+                st.write("Showing basic time series only:")
+                
+                fig, ax = plt.subplots(figsize=(16, 8))
+                ax.plot(ts_data['ts'], ts_data['amount'], linewidth=1.5)
+                ax.set_title(f"{jackpot_id} Jackpot Over Time")
+                ax.set_xlabel("Time")
+                ax.set_ylabel("Amount")
+                st.pyplot(fig)
                 return
                 
+            significant_drops['previous_amount'] = previous_values[ts_data['significant_drop']]
+
             # Calculate statistics
             average_drop = significant_drops['previous_amount'].mean()
-            days_span = (ts_data['ts'].iloc[-1] - ts_data['ts'].iloc[0]).days
-            start_value = ts_data['amount'].iloc[0]
-            end_value = ts_data['amount'].iloc[-1]
-            growth = (end_value - start_value) / days_span if days_span > 0 else 0
+            st.metric("Average Drop Value", f"{average_drop:.2f}")
             
-            # Display stats in columns
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Average Drop Amount", f"{average_drop:.2f}")
-            with col2:
-                st.metric("Data Time Span", f"{days_span} days")
-            with col3:
-                st.metric("Daily Growth Rate", f"{growth:.2f}")
+            # Plot 1: Jackpot Over Time
+            st.subheader("Jackpot Over Time")
+            fig1, ax1 = plt.subplots(figsize=(16, 8))
             
-            # Create and display plots
-            st.subheader("Jackpot Amount Over Time")
+            # Plot the main data
+            ax1.plot(ts_data['ts'], ts_data['amount'], linewidth=1.5)
+            ax1.scatter(significant_drops['ts'], significant_drops['amount'], color='red', label='Significant Drop')
+            ax1.axhline(y=average_drop, color='r', linestyle='--', label='Average Drop')
+            ax1.set_title(f"{jackpot_id} Jackpot Over Time")
+            ax1.set_xlabel("Time")
+            ax1.set_ylabel("Amount")
+            ax1.legend()
             
-            # Use Streamlit's native plotting capabilities first
-            st.line_chart(ts_data.set_index('ts')['amount'])
+            # Annotate the previous value of the significant drop
+            for index, row in significant_drops.iterrows():
+                ax1.annotate(f"{row['previous_amount']:.2f}", 
+                            (row['ts'], row['previous_amount']), 
+                            textcoords="offset points", 
+                            xytext=(0,10), 
+                            ha='center')
             
-            st.write("Detailed Plot with Drop Analysis")
+            # Format axes
+            ax1.yaxis.set_major_formatter(ScalarFormatter())
+            plt.ticklabel_format(style='plain', axis='y')
+            plt.xticks(rotation=45)
+            plt.tight_layout()
             
-            try:
-                # Clear any previous matplotlib plots
-                plt.close('all')
-                
-                # Create a new figure with explicit figsize
-                fig1, ax1 = plt.subplots(figsize=(10, 6))
-                
-                # Basic plotting
-                ax1.plot(ts_data['ts'], ts_data['amount'], linewidth=1.5)
-                
-                # Add scatter points for drops
-                if not significant_drops.empty:
-                    ax1.scatter(significant_drops['ts'], significant_drops['amount'], color='red', label='Significant Drop')
-                
-                # Add reference line
-                ax1.axhline(y=average_drop, color='r', linestyle='--', label='Average Drop')
-                
-                # Set labels and formatting
-                ax1.set_title(f"{jackpot_id} Jackpot Over Time")
-                ax1.set_xlabel("Time")
-                ax1.set_ylabel("Amount")
-                ax1.yaxis.set_major_formatter(ScalarFormatter())
-                plt.xticks(rotation=45)
-                plt.tight_layout()
-                ax1.legend()
-                
-                # Add debug information
-                st.write(f"Figure size: {fig1.get_size_inches()}")
-                st.write(f"Data points: {len(ts_data)}, Drops: {len(significant_drops)}")
-                
-                # Display the plot
-                st.pyplot(fig1)
-            except Exception as plot_error:
-                st.error(f"Error creating time series plot: {plot_error}")
-                
-                # Fallback to a simpler plot
-                st.write("Fallback plot:")
-                simple_fig, simple_ax = plt.subplots()
-                simple_ax.plot(ts_data['ts'], ts_data['amount'])
-                simple_ax.set_title("Jackpot Over Time (Simple View)")
-                st.pyplot(simple_fig)
+            st.pyplot(fig1)
             
-            # Histogram of significant drops
+            # Plot 2: Histogram
             st.subheader("Distribution of Significant Drops")
-            fig2, ax2 = plt.subplots(figsize=(10, 6))
+            fig2, ax2 = plt.subplots(figsize=(16, 8))
+            
             sns.histplot(significant_drops['previous_amount'], kde=True, ax=ax2, color='#8E44AD', bins=30)
             ax2.set_ylabel('Frequency')
             ax2.set_xlabel('Amount')
@@ -351,19 +232,22 @@ def analyze_jackpot(jackpot_id: str, days: Optional[int] = None) -> None:
             ax2.xaxis.set_major_locator(plt.MaxNLocator(25))
             ax2.xaxis.set_major_formatter(ScalarFormatter())
             plt.tight_layout()
+            
             st.pyplot(fig2)
             
-            # Probability plot
-            st.subheader("Probability Distribution Analysis")
-            fig3, ax3 = plt.subplots(figsize=(10, 6))
+            # Plot 3: Probability Plot
+            st.subheader("Probability Distribution")
+            fig3, ax3 = plt.subplots(figsize=(16, 8))
+            
             stats.probplot(significant_drops['previous_amount'], plot=ax3, fit=True)
             ax3.set_title('Significant Drops Probability Plot')
             plt.tight_layout()
+            
             st.pyplot(fig3)
             
-            # Cumulative sum plot
+            # Plot 4: Cumulative Sum
             st.subheader("Cumulative Sum of Drops")
-            fig4, ax4 = plt.subplots(figsize=(10, 6))
+            fig4, ax4 = plt.subplots(figsize=(16, 8))
             
             # Calculate cumulative daily wins
             cumulative_daily_wins = significant_drops['previous_amount'].cumsum()
@@ -382,32 +266,46 @@ def analyze_jackpot(jackpot_id: str, days: Optional[int] = None) -> None:
             ax4.yaxis.set_major_formatter(ScalarFormatter())
             ax4.ticklabel_format(axis='y', style='plain')
             plt.tight_layout()
+            
             st.pyplot(fig4)
             
-            # Download options
-            st.subheader("Download Options")
-            download_col1, download_col2 = st.columns(2)
+            # Additional statistics
+            st.subheader("Additional Statistics")
+            col1, col2, col3 = st.columns(3)
             
-            with download_col1:
-                # Download the data
-                csv = ts_data.to_csv(index=False).encode('utf-8')
+            with col1:
+                days_span = (ts_data['ts'].iloc[-1] - ts_data['ts'].iloc[0]).days
+                st.metric("Data Time Span", f"{days_span} days")
+                
+            with col2:
+                start_value = ts_data['amount'].iloc[0]
+                end_value = ts_data['amount'].iloc[-1]
+                growth = (end_value - start_value) / days_span
+                st.metric("Daily Growth Rate", f"{growth:.2f}")
+                
+            with col3:
+                st.metric("Number of Drops", str(len(significant_drops)))
+            
+            # Download options
+            st.subheader("Download Data")
+            col1, col2 = st.columns(2)
+            
+            with col1:
                 st.download_button(
-                    label="Download Raw Data as CSV",
-                    data=csv,
-                    file_name=f"{jackpot_id}_data.csv",
+                    label="Download Time Series Data",
+                    data=ts_data.to_csv(index=False).encode('utf-8'),
+                    file_name=f"{jackpot_id}_timeseries.csv",
                     mime="text/csv"
                 )
                 
-            with download_col2:
-                # Download the analysis results
-                significant_csv = significant_drops.to_csv(index=False).encode('utf-8')
+            with col2:
                 st.download_button(
-                    label="Download Analysis Results as CSV",
-                    data=significant_csv,
-                    file_name=f"{jackpot_id}_analysis.csv",
+                    label="Download Significant Drops Data",
+                    data=significant_drops.to_csv(index=False).encode('utf-8'),
+                    file_name=f"{jackpot_id}_drops.csv",
                     mime="text/csv"
                 )
-                
+            
         else:
             period = f" over the last {days} days" if days else ""
             st.error(f"No data received for jackpot {jackpot_id}{period}")
@@ -415,6 +313,8 @@ def analyze_jackpot(jackpot_id: str, days: Optional[int] = None) -> None:
     except Exception as e:
         st.error(f"Analysis failed: {str(e)}")
         logger.error(f"Analysis failed: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
 
 # Main app code
 def main():
@@ -438,59 +338,34 @@ def main():
         st.title("📊 Jackpot Analysis")
         st.write("Analyze jackpot data and visualize trends.")
         
-        # Add data source selector
-        st.sidebar.subheader("Data Source")
-        data_source = st.sidebar.radio(
-            "Select Data Source",
-            ["API (Real Data)", "Mock Data (Demo)"],
-            index=1,  # Default to mock data since API is not working
-            help="Choose to use real API data or generated mock data"
+        # API settings in sidebar
+        st.sidebar.subheader("API Settings")
+        api_url = st.sidebar.text_input(
+            "API URL", 
+            value="https://grnst-data-store-serv.com",
+            help="The base URL of the jackpot API"
         )
-        use_mock_data = (data_source == "Mock Data (Demo)")
         
-        if use_mock_data:
-            st.info("🧪 Using simulated mock data for demonstration purposes")
-        else:
-            # Advanced options for API
-            st.sidebar.subheader("API Settings")
-            api_url = st.sidebar.text_input(
-                "API URL", 
-                value="https://grnst-data-store-serv.com",
-                help="The base URL of the jackpot API"
-            )
-        
-        # Debugging options for admin users
+        # Admin debugging options
         if st.session_state.get("user_role") == "admin":
-            st.sidebar.subheader("Admin Options")
-            debug = st.sidebar.checkbox("Enable Debug Mode", value=False)
-            
-            if debug:
-                st.sidebar.info("Debug mode enabled")
-                matplotlib_backend = plt.get_backend()
-                st.sidebar.write(f"Matplotlib backend: {matplotlib_backend}")
+            st.sidebar.subheader("Debug Options")
+            if st.sidebar.checkbox("Show Debug Info"):
+                st.sidebar.info(f"Matplotlib backend: {plt.get_backend()}")
                 
                 if st.sidebar.button("Use Agg Backend"):
                     plt.switch_backend('Agg')
-                    st.sidebar.success(f"Switched to Agg backend")
-                    st.rerun()
+                    st.experimental_rerun()
         
         # Input form
         with st.form("jackpot_analysis_form"):
             col1, col2 = st.columns([3, 1])
             
             with col1:
-                if use_mock_data:
-                    jackpot_id = st.text_input(
-                        "Mock Jackpot Name", 
-                        value="Demo_Jackpot_1",
-                        help="Enter a name for the mock jackpot (used as random seed)"
-                    )
-                else:
-                    jackpot_id = st.text_input(
-                        "Jackpot ID", 
-                        value="feeds-jackpots.s3.amazonaws.com_Ave Caesar_LEAVECAESAR",
-                        help="Enter the jackpot identifier"
-                    )
+                jackpot_id = st.text_input(
+                    "Jackpot ID", 
+                    value="feeds-jackpots.s3.amazonaws.com_Ave Caesar_LEAVECAESAR",
+                    help="Enter the jackpot identifier"
+                )
                 
             with col2:
                 days = st.number_input(
@@ -498,7 +373,7 @@ def main():
                     min_value=7, 
                     max_value=365,
                     value=90,
-                    help="Number of days of data to analyze"
+                    help="Number of days of data to analyze (if available)"
                 )
                 
             submit_button = st.form_submit_button("Analyze Jackpot")
@@ -508,13 +383,8 @@ def main():
                 # Store the analysis parameters
                 st.session_state["last_jackpot_id"] = jackpot_id
                 st.session_state["last_days"] = days
-                st.session_state["last_used_mock"] = use_mock_data
                 
-                analyze_jackpot(
-                    jackpot_id=jackpot_id, 
-                    days=days, 
-                    use_mock_data=use_mock_data
-                )
+                analyze_jackpot(jackpot_id=jackpot_id, days=days)
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
                 import traceback
@@ -523,41 +393,31 @@ def main():
         # Display previous analysis if available
         if "last_jackpot_id" in st.session_state and "last_days" in st.session_state:
             with st.expander("Previous Analysis", expanded=False):
-                mock_text = "(Mock Data)" if st.session_state.get("last_used_mock", False) else "(API Data)"
-                st.info(f"Last analyzed: {st.session_state['last_jackpot_id']} - {st.session_state['last_days']} days {mock_text}")
+                st.info(f"Last analyzed: {st.session_state['last_jackpot_id']} - {st.session_state['last_days']} days")
                 
                 if st.button("Rerun Previous Analysis"):
-                    use_mock = st.session_state.get("last_used_mock", use_mock_data)
                     try:
                         analyze_jackpot(
-                            jackpot_id=st.session_state["last_jackpot_id"], 
-                            days=st.session_state["last_days"], 
-                            use_mock_data=use_mock
+                            jackpot_id=st.session_state["last_jackpot_id"],
+                            days=st.session_state["last_days"]
                         )
                     except Exception as e:
                         st.error(f"Error rerunning analysis: {e}")
-                        st.info("Try running a new analysis instead.")
         
-        # Additional help section
-        with st.expander("Help & Info"):
-            st.markdown("""
-            ### About the Jackpot Analysis Page
+        # Help information
+        with st.expander("About Jackpot Analysis"):
+            st.write("""
+            This page allows you to analyze jackpot data from the API.
             
-            This page helps you analyze jackpot data and visualize important trends:
+            The analysis includes:
+            - Visualization of jackpot amounts over time
+            - Identification of significant drops
+            - Distribution analysis of drop amounts
+            - Probability distribution analysis
+            - Cumulative sum visualization
             
-            - **Mock Data Option**: If the API is unavailable, you can still test functionality with realistic mock data
-            - **Time Series Analysis**: See jackpot amounts over time with highlighted drops
-            - **Drop Statistics**: Analyze when and how much jackpots drop
-            
-            ### How to use:
-            1. Select data source (API or Mock Data)
-            2. Enter jackpot ID (or mock name)
-            3. Select the number of days to analyze
-            4. Click "Analyze Jackpot"
-            
-            You can download the analysis results as CSV files for further processing.
+            Enter a jackpot ID and select the time period, then click "Analyze Jackpot" to begin.
             """)
-            
     else:
         st.warning("Please log in to access the jackpot analysis features.")
 
