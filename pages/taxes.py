@@ -468,7 +468,7 @@ country_details = st.empty()
 # Initialize the selected country from URL parameters or click events
 if "selected_country" not in st.session_state:
     # Check URL parameters first
-    params = st.experimental_get_query_params()
+    params = st.get_query_params()
     if "country" in params:
         st.session_state.selected_country = params["country"][0]
     else:
@@ -739,7 +739,7 @@ if st.session_state.selected_country:
                         }
                         
                         # Navigate to Jackpot Map page
-                        st.experimental_set_query_params(**params)
+                        st.set_query_params(**params)
                 else:
                     st.info(f"No jackpot data available for {st.session_state.selected_country}.")
                     st.warning("This could be because the country doesn't have jackpots available, or the country name doesn't match the regions in your jackpot data.")
@@ -756,7 +756,7 @@ if st.session_state.selected_country:
                     
                     # Still provide a link to the jackpot map
                     if st.button("Go to Jackpot Map Dashboard"):
-                        st.experimental_set_query_params(page="jackpot_map")
+                        st.set_query_params(page="jackpot_map")
     else:
         st.warning(f"No data available for {st.session_state.selected_country}")
 else:
