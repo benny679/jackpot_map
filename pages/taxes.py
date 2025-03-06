@@ -644,7 +644,6 @@ if st.session_state.selected_country:
                         try:
                             accounts = int(float(country_data['Accounts_#'].iloc[0]))
                             st.metric("Registered Player Accounts", f"{accounts:,}")
-                            st.write("
                         except (ValueError, TypeError):
                             st.write(f"**Player Accounts:** {country_data['Accounts_#'].iloc[0]}")
                 
