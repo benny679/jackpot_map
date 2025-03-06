@@ -146,10 +146,6 @@ def load_data():
         # Apply mapping if needed
         if column_mapping:
             df = df.rename(columns=column_mapping)
-        
-        # Log the columns we found
-        st.write("Found columns:", df.columns.tolist())
-        
         # Convert numeric columns
         numeric_cols = ["GGR CAGR", "Operator_tax", "Player_tax", "Accounts_#", "Tax (iGaming)"]
         for col in numeric_cols:
