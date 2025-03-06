@@ -1,55 +1,19 @@
 import streamlit as st
+from utils.auth import check_password, logout, initialize_session_state
+from utils.ip_manager import log_ip_activity
 import pandas as pd
 import plotly.express as px
 import gspread
 from google.oauth2 import service_account
 import re
-from utils.auth import check_password, logout, initialize_session_state
-from utils.ip_manager import log_ip_activity
+import traceback
 
-# Then your other imports
-import pandas as pd
-import plotly.express as px
-import gspread
-from google.oauth2 import service_account
-import re
-
-# Start of page file (pages/your_page.py)
-import streamlit as st
-from utils.auth import check_password, logout, initialize_session_state
-from utils.ip_manager import log_ip_activity
-
-# Other imports for this specific page
-# ...
-
-# Set page configuration (must be the first Streamlit command)
+# 2. PAGE CONFIGURATION
 st.set_page_config(
-    page_title="Your Page Title",
+    page_title="Global iGaming Regulation & Tax Map",
     page_icon="🏦",
     layout="wide"
 )
-
-# Initialize session state variables 
-initialize_session_state()
-
-# Check if the user is authenticated
-if check_password():
-    # Log the page view
-    if "username" in st.session_state and "ip_address" in st.session_state:
-        log_ip_activity(st.session_state["username"], "page_view_your_page", st.session_state["ip_address"])
-    
-    # Show logout button and user info
-    st.sidebar.button("Logout", on_click=logout)
-    st.sidebar.info(f"Logged in as: {st.session_state['username']} ({st.session_state['user_role']})")
-    
-    if st.session_state["user_role"] == "admin":
-        st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
-    
-    # Page-specific content here
-    st.title("Your Page Title")
-    # Rest of this page's content...
-    
-# End of authentication check
 
 # Function to connect to jackpot data - CORRECTED sheet and worksheet names
 def connect_to_jackpots(country=None):
@@ -324,6 +288,24 @@ def load_data():
         st.error("Please check your Google Sheet permissions and ensure the 'Research - Summary' sheet with 'Tax' worksheet exists.")
         # Raise the exception to see detailed error message during development
         raise e
+# Initialize session state variables 
+initialize_session_state()
+
+# Check if the user is authenticated
+if check_password():
+    # Log the page view
+    if "username" in st.session_state and "ip_address" in st.session_state:
+        log_ip_activity(st.session_state["username"], "page_view_your_page", st.session_state["ip_address"])
+    
+    # Show logout button and user info
+    st.sidebar.button("Logout", on_click=logout)
+    st.sidebar.info(f"Logged in as: {st.session_state['username']} ({st.session_state['user_role']})")
+    
+    if st.session_state["user_role"] == "admin":
+        st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
+
+   if st.session_state["user_role"] == "admin":
+        st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
 
 # Title and description
 st.title("Global iGaming Regulation & Tax Dashboard")
