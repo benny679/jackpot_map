@@ -3,10 +3,8 @@ import pandas as pd
 import numpy as np
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-import matplotlib.ticker as ticker
-import seaborn as sns
+import plotly.graph_objects as go
+import plotly.express as px
 from datetime import datetime, timedelta
 import io
 import os
@@ -24,15 +22,6 @@ st.set_page_config(
 
 # Initialize session state variables
 initialize_session_state()
-
-# Formatting functions for charts
-def format_currency(x, pos):
-    """Format numbers as currency."""
-    return f'£{x:,.0f}' if x >= 0 else f'-£{abs(x):,.0f}'
-
-def format_number(x, pos):
-    """Format numbers with thousand separators."""
-    return f'{x:,.0f}'
 
 # Function to load KPI data from Google Sheet
 @st.cache_data(ttl=3600)  # Cache data for 1 hour
@@ -83,27 +72,22 @@ def load_kpi_data():
         st.error(f"Error loading KPI data: {str(e)}")
         return pd.DataFrame()
 
-# Function to create a stacked area chart
-def create_stacked_area_chart(df, columns, start_date=None, end_date=None, date_format='%d/%m/%Y', date_interval='weekly', y_limit=None):
+# Function to create an interactive stacked area chart using Plotly
+def create_stacked_area_chart(df, columns, start_date=None, end_date=None, date_format=None, date_interval=None, y_limit=None):
     """
-    Create a stacked area chart with selected KPIs.
+    Create an interactive stacked area chart with selected KPIs using Plotly.
     
     Parameters:
         df (DataFrame): The data to plot
         columns (list): List of columns to include in the chart
         start_date (datetime, optional): Start date for x-axis
         end_date (datetime, optional): End date for x-axis
-        date_format (str, optional): Format for date labels on x-axis
-        date_interval (str, optional): Interval for date ticks ('daily', 'weekly', 'monthly')
+        date_format (str, optional): Not used in Plotly (handled by Plotly's configuration)
+        date_interval (str, optional): Not used in Plotly (handled by Plotly's configuration)
         y_limit (float, optional): Optional upper limit for y-axis
     """
-    plt.style.use('ggplot')
-    
     # Specify colors for the chart
     colors = ['#ffd700', '#0084ff', '#04ff00', '#ff3c00', '#ff0084', '#9932CC', '#00CED1', '#FFA07A']
-    
-    # Create figure
-    fig, ax = plt.subplots(figsize=(12, 6))
     
     # Filter to columns that exist in the dataframe
     existing_columns = [col for col in columns if col in df.columns]
@@ -118,96 +102,77 @@ def create_stacked_area_chart(df, columns, start_date=None, end_date=None, date_
     # Sort by date to ensure proper chronological order
     df = df.sort_values('Week Commencing')
     
-    # Create a copy of the data for plotting
-    plot_data = df.set_index('Week Commencing')[existing_columns].copy()
-    
-    # Fill NaN values with 0 for proper stacking
-    plot_data = plot_data.fillna(0)
-    
     # Process date range parameters
     if start_date is None:
         # Default to first date in data
-        start_date = plot_data.index.min()
+        start_date = df['Week Commencing'].min()
     
     if end_date is None:
         # Default to last date in data
-        end_date = plot_data.index.max()
+        end_date = df['Week Commencing'].max()
     
-    # Create stacked area chart based on the columns
-    ax.stackplot(
-        plot_data.index,
-        plot_data.values.T,
-        labels=plot_data.columns,
-        colors=colors[:len(existing_columns)],
-        alpha=0.8,
-        edgecolor='black',
+    # Filter by date range
+    df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)]
+    
+    # Create the figure
+    fig = go.Figure()
+    
+    # Add traces for each KPI
+    for i, col in enumerate(existing_columns):
+        fig.add_trace(
+            go.Scatter(
+                x=df['Week Commencing'],
+                y=df[col].fillna(0),
+                mode='lines',
+                name=col,
+                line=dict(width=0),
+                stackgroup='one',  # This makes it a stacked area chart
+                fillcolor=colors[i % len(colors)],
+                hovertemplate='%{x}<br>%{y:,.0f}<extra>' + col + '</extra>'
+            )
+        )
+    
+    # Update layout
+    fig.update_layout(
+        title='KPI Metrics Over Time',
+        title_font_size=18,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        hovermode='x unified',
+        xaxis=dict(
+            title='Week Commencing',
+            tickformat='%d %b %Y',
+            rangeslider_visible=True
+        ),
+        yaxis=dict(
+            title='Value',
+            rangemode='nonnegative',
+            range=[0, y_limit] if y_limit else None,
+            tickformat=',d'
+        ),
+        height=500,
+        margin=dict(l=40, r=40, t=60, b=40)
     )
     
-    # Set x-axis limits based on parameters
-    ax.set_xlim(start_date, end_date)
-    
-    # Configure x-axis date ticks based on interval
-    if date_interval == 'daily':
-        ax.xaxis.set_major_locator(mdates.DayLocator())
-    elif date_interval == 'weekly':
-        ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=0))  # Monday
-    elif date_interval == 'monthly':
-        ax.xaxis.set_major_locator(mdates.MonthLocator())
-    
-    # Format the plot
-    ax.set_title('KPI Metrics Over Time', fontsize=14, pad=20)
-    ax.set_xlabel('Week Commencing', fontsize=12)
-    ax.set_ylabel('Value', fontsize=12)
-    ax.tick_params(axis='x', rotation=45, labelsize=10)
-    ax.tick_params(axis='y', labelsize=10)
-    ax.grid(True, linestyle='--', alpha=0.7)
-    
-    # Format x-axis with dates using the specified format
-    ax.xaxis.set_major_formatter(mdates.DateFormatter(date_format))
-    
-    # Format y-axis with proper number formatting
-    ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_number))
-    
-    # Ensure y-axis starts at 0
-    if y_limit:
-        ax.set_ylim(0, y_limit)
-    else:
-        ax.set_ylim(0, None)
-    
-    # Add legend with good placement
-    ax.legend(
-        loc='upper left',
-        fontsize=10,
-        framealpha=0.9,
-        facecolor='white',
-        edgecolor='gray'
-    )
-    
-    # Add padding
-    ax.margins(x=0.05)
-    
-    plt.tight_layout(pad=3.0)
     return fig
 
-# Function to create EV Added chart
-def create_ev_added_chart(df, start_date=None, end_date=None, date_format='%d/%m/%Y', date_interval='weekly'):
+# Function to create an interactive EV Added chart using Plotly
+def create_ev_added_chart(df, start_date=None, end_date=None, date_format=None, date_interval=None):
     """
-    Create a chart for EV Added over time.
+    Create an interactive chart for EV Added over time using Plotly.
     
     Parameters:
         df (DataFrame): The data to plot
         start_date (datetime, optional): Start date for x-axis
         end_date (datetime, optional): End date for x-axis
-        date_format (str, optional): Format for date labels on x-axis
-        date_interval (str, optional): Interval for date ticks ('daily', 'weekly', 'monthly')
+        date_format (str, optional): Not used in Plotly (handled by Plotly's configuration)
+        date_interval (str, optional): Not used in Plotly (handled by Plotly's configuration)
     """
-    plt.style.use('ggplot')
-    # Use gold color for money/value
-    colors = ['#DAA520']  # Golden color
-    
-    # Create figure
-    fig, ax = plt.subplots(figsize=(12, 6))
-    
     # Make sure EV Added column exists
     if 'EV Added' not in df.columns:
         st.error("'EV Added' column doesn't exist in the data")
@@ -219,86 +184,68 @@ def create_ev_added_chart(df, start_date=None, end_date=None, date_format='%d/%m
     # Sort by date to ensure proper chronological order
     df = df.sort_values('Week Commencing')
     
-    # Create a copy of the data for plotting
-    ev_data = df[['Week Commencing', 'EV Added']].copy()
-    
-    # Replace NaN with 0
-    ev_data = ev_data.fillna(0)
-    
-    # Set the index to Week Commencing for plotting
-    ev_data = ev_data.set_index('Week Commencing')
-    
     # Process date range parameters
     if start_date is None:
         # Default to first date in data
-        start_date = ev_data.index.min()
+        start_date = df['Week Commencing'].min()
     
     if end_date is None:
         # Default to last date in data
-        end_date = ev_data.index.max()
+        end_date = df['Week Commencing'].max()
     
-    # Plot line for EV Added
-    ax.plot(
-        ev_data.index,
-        ev_data['EV Added'],
-        label='EV Added',
-        color="#000000",
-        marker='o',
-        markersize=5,
-        alpha=0.8
+    # Filter by date range
+    df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)]
+    
+    # Create the figure
+    fig = go.Figure()
+    
+    # Add area fill for EV Added
+    fig.add_trace(
+        go.Scatter(
+            x=df['Week Commencing'],
+            y=df['EV Added'].fillna(0),
+            mode='lines',
+            name='EV Added',
+            fill='tozeroy',
+            line=dict(color='black', width=1),
+            fillcolor='#DAA520',  # Golden color
+            hovertemplate='%{x}<br>£%{y:,.2f}<extra>EV Added</extra>'
+        )
     )
     
-    # Create the area chart
-    ax.fill_between(
-        ev_data.index,
-        ev_data['EV Added'],
-        0,  # Fill down to 0
-        color=colors[0],
-        alpha=0.8,
-        label='EV Added'
+    # Add markers for data points
+    fig.add_trace(
+        go.Scatter(
+            x=df['Week Commencing'],
+            y=df['EV Added'].fillna(0),
+            mode='markers',
+            name='',
+            marker=dict(color='black', size=8),
+            showlegend=False,
+            hoverinfo='skip'
+        )
     )
     
-    # Set x-axis limits based on parameters
-    ax.set_xlim(start_date, end_date)
-    
-    # Configure x-axis date ticks based on interval
-    if date_interval == 'daily':
-        ax.xaxis.set_major_locator(mdates.DayLocator())
-    elif date_interval == 'weekly':
-        ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=0))  # Monday
-    elif date_interval == 'monthly':
-        ax.xaxis.set_major_locator(mdates.MonthLocator())
-    
-    # Format the plot
-    ax.set_title('EV Added Over Time', fontsize=14, pad=20)
-    ax.set_xlabel('Week Commencing', fontsize=12)
-    ax.set_ylabel('EV Added (£)', fontsize=12)
-    ax.tick_params(axis='x', rotation=45, labelsize=10)
-    ax.tick_params(axis='y', labelsize=10)
-    ax.grid(True, linestyle='--', alpha=0.7)
-    
-    # Format x-axis with dates using the specified format
-    ax.xaxis.set_major_formatter(mdates.DateFormatter(date_format))
-    
-    # Format y-axis with currency formatting
-    ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_currency))
-    
-    # Ensure y-axis starts at 0
-    ax.set_ylim(0, None)
-    
-    # Add legend
-    ax.legend(
-        loc='upper right',
-        fontsize=10,
-        framealpha=0.9,
-        facecolor='white',
-        edgecolor='gray'
+    # Update layout
+    fig.update_layout(
+        title='EV Added Over Time',
+        title_font_size=18,
+        hovermode='x unified',
+        xaxis=dict(
+            title='Week Commencing',
+            tickformat='%d %b %Y',
+            rangeslider_visible=True
+        ),
+        yaxis=dict(
+            title='EV Added (£)',
+            rangemode='nonnegative',
+            tickprefix='£',
+            tickformat=',.0f'
+        ),
+        height=500,
+        margin=dict(l=40, r=40, t=60, b=40)
     )
     
-    # Add padding
-    ax.margins(x=0.05)
-    
-    plt.tight_layout(pad=3.0)
     return fig
 
 # Main app code
@@ -376,7 +323,7 @@ def main():
             start_date = pd.to_datetime(start_date)
             end_date = pd.to_datetime(end_date)
         
-        # Date format and interval
+        # Keep date format and interval for backward compatibility, but they're not used in Plotly
         date_format = st.sidebar.selectbox(
             "Date format",
             ["'%d %b'", "'%Y-%m-%d'", "'%b %Y'"],
@@ -453,18 +400,17 @@ def main():
             # First display the stacked area chart with selected KPIs
             st.subheader("KPI Metrics Over Time")
             if selected_kpis:
-                stacked_chart = create_stacked_area_chart(
+                stacked_fig = create_stacked_area_chart(
                     df,
                     columns=selected_kpis,
                     start_date=start_date,
                     end_date=end_date,
-                    date_format=date_format.replace("'", ""),
-                    date_interval=date_interval,
                     y_limit=y_limit
                 )
                 
-                if stacked_chart:
-                    st.pyplot(stacked_chart)
+                if stacked_fig:
+                    # Display the interactive plot
+                    st.plotly_chart(stacked_fig, use_container_width=True)
                     
                     # Option to upload to Slack
                     col1, col2 = st.columns([3, 1])
@@ -477,12 +423,11 @@ def main():
                         if st.button("Upload to Slack", key="upload_kpi"):
                             # Save chart to a temporary file
                             chart_file = "kpi_chart.png"
-                            stacked_chart.savefig(
+                            stacked_fig.write_image(
                                 chart_file,
-                                bbox_inches='tight',
-                                dpi=300,
-                                facecolor='white',
-                                edgecolor='none'
+                                width=1200,
+                                height=600,
+                                scale=2
                             )
                             
                             # Upload to Slack
@@ -497,16 +442,15 @@ def main():
             # Display EV Added chart if the column exists
             if 'EV Added' in df.columns:
                 st.subheader("EV Added Over Time")
-                ev_chart = create_ev_added_chart(
+                ev_fig = create_ev_added_chart(
                     df,
                     start_date=start_date,
-                    end_date=end_date,
-                    date_format=date_format.replace("'", ""),
-                    date_interval=date_interval
+                    end_date=end_date
                 )
                 
-                if ev_chart:
-                    st.pyplot(ev_chart)
+                if ev_fig:
+                    # Display the interactive plot
+                    st.plotly_chart(ev_fig, use_container_width=True)
                     
                     # Option to upload to Slack
                     col1, col2 = st.columns([3, 1])
@@ -519,12 +463,11 @@ def main():
                         if st.button("Upload to Slack", key="upload_ev"):
                             # Save chart to a temporary file
                             chart_file = "ev_chart.png"
-                            ev_chart.savefig(
+                            ev_fig.write_image(
                                 chart_file,
-                                bbox_inches='tight',
-                                dpi=300,
-                                facecolor='white',
-                                edgecolor='none'
+                                width=1200,
+                                height=600,
+                                scale=2
                             )
                             
                             # Upload to Slack
