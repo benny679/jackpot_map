@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import gspread
 from google.oauth2 import service_account
+import re
 
 # Function to connect to jackpot data
 def connect_to_jackpots(country=None):
@@ -86,57 +87,33 @@ def load_data():
             st.error("Not enough rows in the sheet")
             return pd.DataFrame()
         
-        # Get the first two rows as headers
-        header_row1 = all_values[0]
-        header_row2 = all_values[1]
+        # Get the first row as header and remove any sample data
+        header_row = all_values[0]
         
-        # Combine the two rows to create complete headers
-        combined_headers = []
-        for i in range(len(header_row1)):
-            if i < len(header_row2):
-                # Combine non-empty values from both rows
-                header1 = header_row1[i].strip()
-                header2 = header_row2[i].strip()
-                
-                if header1 and header2:
-                    combined_headers.append(f"{header1} - {header2}")
-                elif header1:
-                    combined_headers.append(header1)
-                elif header2:
-                    combined_headers.append(header2)
-                else:
-                    combined_headers.append(f"Column_{i}")
-            else:
-                # Handle case where row2 is shorter than row1
-                combined_headers.append(header_row1[i].strip() or f"Column_{i}")
-        
-        # Check for empty or duplicate headers and fix them
+        # Clean headers - no combining, just use the first row
         cleaned_headers = []
-        seen = {}
-        
-        for i, header in enumerate(combined_headers):
-            if not header or header == "":
-                cleaned_headers.append(f"Column_{i}")
-            elif header in seen:
-                cleaned_headers.append(f"{header}_{seen[header]}")
-                seen[header] += 1
+        for header in header_row:
+            if header.strip():
+                cleaned_headers.append(header.strip())
             else:
-                cleaned_headers.append(header)
-                seen[header] = 1
+                cleaned_headers.append(f"Column_{len(cleaned_headers)}")
         
-        # Use data starting from row 3
-        data_rows = all_values[2:]
+        # Ensure headers are unique
+        unique_headers = []
+        seen = {}
+        for h in cleaned_headers:
+            if h in seen:
+                unique_headers.append(f"{h}_{seen[h]}")
+                seen[h] += 1
+            else:
+                unique_headers.append(h)
+                seen[h] = 1
+        
+        # Use data starting from row 2 (skip header row)
+        data_rows = all_values[1:]
         
         # Create DataFrame
-        df = pd.DataFrame(data_rows, columns=cleaned_headers)
-        
-        # Find and rename key columns to standard names - these are the expected columns
-        expected_columns = [
-            "Country_region", "Market_region", "Regulated", "Regulation_type", 
-            "Offshore?", "Residents?", "Casino", "iGaming", "Betting", "iBetting", 
-            "Operator_tax", "Player_tax", "Accounts_#", "Stake_limit", 
-            "Deposit_limit", "Withdrawal_limit", "Priority region", "Triggering reviews", "Notes"
-        ]
+        df = pd.DataFrame(data_rows, columns=unique_headers)
         
         # Convert numeric columns
         numeric_cols = ["GGR CAGR", "Operator_tax", "Player_tax", "Accounts_#"]
@@ -230,13 +207,19 @@ with tab1:
                         else:
                             color_map[val] = "#808080"  # Gray for unknown
                 
+                # Create hover data with only the columns that exist
+                hover_data_cols = []
+                for col in ["Market_region", "Regulation_type", "Offshore?", "Casino", "iGaming", "Betting", "iBetting"]:
+                    if col in filtered_df.columns:
+                        hover_data_cols.append(col)
+                
                 fig = px.choropleth(
                     filtered_df,
-                    locations="Country_region",  # Column containing country names
-                    locationmode="country names",  # Use country names (alternative is ISO codes)
-                    color="Regulated",  # Color by regulation status
+                    locations="Country_region",
+                    locationmode="country names",
+                    color="Regulated",
                     hover_name="Country_region",
-                    hover_data=[col for col in ["Market_region", "Regulation_type", "Offshore?", "Casino", "iGaming", "Betting", "iBetting"] if col in filtered_df.columns],
+                    hover_data=hover_data_cols,
                     color_discrete_map=color_map,
                     title="iGaming Regulation Status by Country (Click on a country for details)"
                 )
@@ -277,13 +260,18 @@ with tab1:
             selected_gaming_type = st.selectbox("View regulation status for specific type:", gaming_types)
             
             # Create a map for the selected gaming type
+            hover_data_cols = []
+            for col in ["Market_region", "Regulation_type", selected_gaming_type]:
+                if col in filtered_df.columns:
+                    hover_data_cols.append(col)
+            
             fig_gaming = px.choropleth(
                 filtered_df,
                 locations="Country_region",
                 locationmode="country names",
-                color=selected_gaming_type,  # Color by selected gaming type status
+                color=selected_gaming_type,
                 hover_name="Country_region",
-                hover_data=[col for col in ["Market_region", "Regulation_type", selected_gaming_type] if col in filtered_df.columns],
+                hover_data=hover_data_cols,
                 color_discrete_sequence=px.colors.qualitative.Safe,
                 title=f"{selected_gaming_type} Regulation Status by Country"
             )
@@ -310,6 +298,12 @@ with tab2:
         tax_type = st.radio("Select Tax Type:", tax_options, 
                           format_func=lambda x: x.replace("_", " ").title())
         
+        # Create hover data list with only columns that exist
+        hover_data_cols = []
+        for col in ["Market_region", "Regulated", tax_type]:
+            if col in filtered_df.columns:
+                hover_data_cols.append(col)
+        
         # Create tax rate map
         fig_tax = px.choropleth(
             filtered_df,
@@ -317,7 +311,7 @@ with tab2:
             locationmode="country names",
             color=tax_type,
             hover_name="Country_region",
-            hover_data=["Market_region", "Regulated", tax_type],
+            hover_data=hover_data_cols,
             color_continuous_scale=px.colors.sequential.Bluyl,
             title=f"{tax_type.replace('_', ' ').title()} by Country",
             labels={tax_type: f"{tax_type.replace('_', ' ').title()} (%)"}
@@ -337,6 +331,11 @@ with tab2:
     
     # Growth rate (CAGR) map if available
     if 'GGR CAGR' in filtered_df.columns:
+        hover_data_cols = []
+        for col in ["Market_region", "Regulated", "GGR CAGR"]:
+            if col in filtered_df.columns:
+                hover_data_cols.append(col)
+        
         st.subheader("Market Growth (CAGR) by Country")
         
         fig_growth = px.choropleth(
@@ -345,7 +344,7 @@ with tab2:
             locationmode="country names",
             color="GGR CAGR",
             hover_name="Country_region",
-            hover_data=["Market_region", "Regulated", "GGR CAGR"],
+            hover_data=hover_data_cols,
             color_continuous_scale=px.colors.sequential.Viridis,
             title="Gross Gaming Revenue CAGR by Country",
             labels={"GGR CAGR": "Growth Rate (%)"}
@@ -372,6 +371,12 @@ with tab3:
         st.subheader("Responsible Gambling Measures")
         selected_measure = st.selectbox("Select Measure", rg_measures)
         
+        # Create hover data with only existing columns
+        hover_data_cols = []
+        for col in ["Market_region", selected_measure]:
+            if col in filtered_df.columns:
+                hover_data_cols.append(col)
+        
         # Create a map for the selected measure
         fig_measure = px.choropleth(
             filtered_df,
@@ -379,7 +384,7 @@ with tab3:
             locationmode="country names",
             color=selected_measure,
             hover_name="Country_region",
-            hover_data=["Market_region", selected_measure],
+            hover_data=hover_data_cols,
             color_discrete_sequence=px.colors.qualitative.Safe,
             title=f"{selected_measure.replace('_', ' ').title()} Requirements by Country"
         )
@@ -393,7 +398,12 @@ with tab3:
         
         # Table of RG measures
         st.subheader("Responsible Gambling Measures by Country")
-        rg_data = filtered_df[['Country_region', 'Market_region'] + rg_measures]
+        
+        # Create a list of columns that exist
+        table_cols = ['Country_region', 'Market_region'] + rg_measures
+        table_cols = [col for col in table_cols if col in filtered_df.columns]
+        
+        rg_data = filtered_df[table_cols]
         st.dataframe(rg_data, use_container_width=True)
     else:
         st.info("No responsible gambling measure columns found in the dataset.")
