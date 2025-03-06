@@ -23,9 +23,36 @@ def load_data():
         sheet = gc.open("Research - Summary")  # Open by exact name
         worksheet = sheet.worksheet("Tax")  # Use the Tax worksheet
         
-        # Get all data and convert to DataFrame
-        data = worksheet.get_all_records()
-        df = pd.DataFrame(data)
+        # Get all values from the worksheet
+        all_values = worksheet.get_all_values()
+        if not all_values:
+            st.error("Worksheet is empty")
+            return pd.DataFrame()
+            
+        # Get headers (first row)
+        headers = all_values[0]
+        
+        # Check for duplicate headers
+        if len(headers) != len(set(headers)):
+            st.warning("Duplicate column headers detected. Renaming duplicate columns.")
+            
+            # Find and rename duplicate headers
+            seen = {}
+            for i, h in enumerate(headers):
+                if h in seen:
+                    headers[i] = f"{h}_{seen[h]}"
+                    seen[h] += 1
+                else:
+                    seen[h] = 1
+        
+        # Create DataFrame with properly named columns
+        df = pd.DataFrame(all_values[1:], columns=headers)
+        
+        # Convert numeric columns to appropriate types
+        numeric_cols = ['Operator_tax', 'Player_tax', 'Tax (iGaming)', 'GGR CAGR', 'Accounts_#']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
         
         return df
     
