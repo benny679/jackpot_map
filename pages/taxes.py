@@ -628,6 +628,7 @@ if st.session_state.selected_country:
                 with col1:
                     # Tax information in metrics
                     st.subheader("Tax Rates")
+                    st.write(f"{operator_tax}%")
                     
                     tax_cols = [col for col in ['Operator_tax', 'Player_tax'] if col in country_data.columns]
                     if tax_cols:
@@ -643,6 +644,7 @@ if st.session_state.selected_country:
                         try:
                             accounts = int(float(country_data['Accounts_#'].iloc[0]))
                             st.metric("Registered Player Accounts", f"{accounts:,}")
+                            st.write("
                         except (ValueError, TypeError):
                             st.write(f"**Player Accounts:** {country_data['Accounts_#'].iloc[0]}")
                 
