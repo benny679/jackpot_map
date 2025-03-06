@@ -420,7 +420,8 @@ def load_sheet_data():
     """Load data from Google Sheets."""
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_name('client_secret.json', scope)
+        credentials_dict = st.secrets["gcp_service_account"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
         client = gspread.authorize(creds)
         sheet = client.open("Low Vol JPS").worksheet("Jackpot Map")
         data = sheet.get_all_values()
