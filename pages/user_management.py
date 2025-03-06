@@ -214,7 +214,7 @@ if check_password():
                 success, message = delete_user(delete_username)
                 if success:
                     st.success(message)
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error(message)
 
@@ -238,7 +238,7 @@ if check_password():
                     success, message = add_user(new_username, new_password, new_role)
                     if success:
                         st.success(message)
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error(message)
 
@@ -266,7 +266,7 @@ if check_password():
                     success, message = change_role(username, new_role)
                     if success:
                         st.success(message)
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error(message)
 
