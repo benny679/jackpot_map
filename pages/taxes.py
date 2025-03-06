@@ -1,77 +1,8 @@
-# Responsible Gambling view
-with tab3:
-    st.header("Responsible Gambling Measures by Country")
-    
-    # Check if the responsible gambling columns exist
-    rg_columns = [col for col in df.columns if col in ['Responsible Gambling (iGaming)', 'Stake_limit', 'Deposit_limit', 'Withdrawal_limit']]
-    
-    if 'Responsible Gambling (iGaming)' in rg_columns:
-        # If there's a general RG score column
-        fig_rg = px.choropleth(
-            filtered_df,
-            locations="Country_region",
-            locationmode="country names",
-            color="Responsible Gambling (iGaming)",
-            hover_name="Country_region",
-            hover_data=["Market_region", "Regulated"],
-            color_continuous_scale=px.colors.sequential.Greens,
-            title="Responsible Gambling Score by Country"
-        )
-        
-        fig_rg.update_layout(
-            height=600,
-            margin={"r": 0, "t": 30, "l": 0, "b": 0}
-        )
-        
-        st.plotly_chart(fig_rg, use_container_width=True)
-    
-    # Specific Responsible Gambling measures
-    rg_measures = [col for col in ['Stake_limit', 'Deposit_limit', 'Withdrawal_limit'] if col in df.columns]
-    
-    if rg_measures:
-        st.subheader("Responsible Gambling Measures")
-        selected_measure = st.selectbox("Select Measure", rg_measures)
-        
-        # Create a map for the selected measure
-        fig_measure = px.choropleth(
-            filtered_df,
-            locations="Country_region",
-            locationmode="country names",
-            color=selected_measure,
-            hover_name="Country_region",
-            hover_data=["Market_region", selected_measure],
-            color_discrete_sequence=px.colors.qualitative.Safe,
-            title=f"{selected_measure.replace('_', ' ').title()} Requirements by Country"
-        )
-        
-        fig_measure.update_layout(
-            height=500,
-            margin={"r": 0, "t": 30, "l": 0, "b": 0}
-        )
-        
-        st.plotly_chart(fig_measure, use_container_width=True)
-    
-    # If no responsible gambling data is available
-    if not rg_columns:
-        st.info("No responsible gambling data available in the dataset.")
-        
-    # Table of RG measures
-    if rg_measures:
-        st.subheader("Responsible Gambling Measures by Country")
-        rg_data = filtered_df[['Country_region', 'Market_region'] + rg_measures]
-        st.dataframe(rg_data, use_container_width=True)import streamlit as st
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 import gspread
 from google.oauth2 import service_account
-import json
-
-# Page configuration
-st.set_page_config(page_title="Global iGaming Regulation & Tax Map", layout="wide")
-
-# Title and description
-st.title("Global iGaming Regulation & Tax Dashboard")
-st.markdown("Interactive map of global iGaming regulations and tax data. Click on countries or filter by region to view detailed information.")
 
 # Function to load data from Google Sheet
 @st.cache_data(ttl=600)  # Cache data for 10 minutes
@@ -103,6 +34,13 @@ def load_data():
         st.error("Please check your Google Sheet permissions and ensure the 'Research - Summary' sheet with 'Tax' worksheet exists.")
         # Raise the exception to see detailed error message during development
         raise e
+
+# Page configuration
+st.set_page_config(page_title="Global iGaming Regulation & Tax Map", layout="wide")
+
+# Title and description
+st.title("Global iGaming Regulation & Tax Dashboard")
+st.markdown("Interactive map of global iGaming regulations and tax data. Click on countries or filter by region to view detailed information.")
 
 # Load data
 df = load_data()
@@ -184,61 +122,70 @@ with tab1:
     
     # Filter for specific gaming types
     gaming_types = ["Casino", "iGaming", "Betting", "iBetting"]
-    selected_gaming_type = st.selectbox("View regulation status for specific type:", gaming_types)
-    
-    # Create a map for the selected gaming type
-    fig_gaming = px.choropleth(
-        filtered_df,
-        locations="Country_region",
-        locationmode="country names",
-        color=selected_gaming_type,  # Color by selected gaming type status
-        hover_name="Country_region",
-        hover_data=["Market_region", "Regulation_type", selected_gaming_type],
-        color_discrete_sequence=px.colors.qualitative.Safe,
-        title=f"{selected_gaming_type} Regulation Status by Country"
-    )
-    
-    fig_gaming.update_layout(
-        height=500,
-        margin={"r": 0, "t": 30, "l": 0, "b": 0},
-    )
-    
-    st.plotly_chart(fig_gaming, use_container_width=True)
+    gaming_types = [g for g in gaming_types if g in df.columns]
+    if gaming_types:
+        selected_gaming_type = st.selectbox("View regulation status for specific type:", gaming_types)
+        
+        # Create a map for the selected gaming type
+        fig_gaming = px.choropleth(
+            filtered_df,
+            locations="Country_region",
+            locationmode="country names",
+            color=selected_gaming_type,  # Color by selected gaming type status
+            hover_name="Country_region",
+            hover_data=["Market_region", "Regulation_type", selected_gaming_type],
+            color_discrete_sequence=px.colors.qualitative.Safe,
+            title=f"{selected_gaming_type} Regulation Status by Country"
+        )
+        
+        fig_gaming.update_layout(
+            height=500,
+            margin={"r": 0, "t": 30, "l": 0, "b": 0},
+        )
+        
+        st.plotly_chart(fig_gaming, use_container_width=True)
 
 # Tax Map view
 with tab2:
     st.header("iGaming Tax Rates by Country")
     
     # Choose between operator tax and player tax
-    tax_options = ["Operator_tax", "Player_tax"]
+    tax_options = []
+    if "Operator_tax" in df.columns:
+        tax_options.append("Operator_tax")
+    if "Player_tax" in df.columns:
+        tax_options.append("Player_tax")
     if "Tax (iGaming)" in df.columns:
         tax_options.append("Tax (iGaming)")
     
-    tax_type = st.radio("Select Tax Type:", tax_options, 
+    if tax_options:
+        tax_type = st.radio("Select Tax Type:", tax_options, 
                           format_func=lambda x: x.replace("_", " ").title())
-    
-    # Create tax rate map
-    fig_tax = px.choropleth(
-        filtered_df,
-        locations="Country_region",
-        locationmode="country names",
-        color=tax_type,
-        hover_name="Country_region",
-        hover_data=["Market_region", "Regulated", tax_type],
-        color_continuous_scale=px.colors.sequential.Bluyl,
-        title=f"{tax_type.replace('_', ' ').title()} by Country",
-        labels={tax_type: f"{tax_type.replace('_', ' ').title()} (%)"}
-    )
-    
-    fig_tax.update_layout(
-        height=600,
-        margin={"r": 0, "t": 30, "l": 0, "b": 0},
-        coloraxis_colorbar={
-            'title': f"{tax_type.replace('_', ' ').title()} (%)"
-        }
-    )
-    
-    st.plotly_chart(fig_tax, use_container_width=True)
+        
+        # Create tax rate map
+        fig_tax = px.choropleth(
+            filtered_df,
+            locations="Country_region",
+            locationmode="country names",
+            color=tax_type,
+            hover_name="Country_region",
+            hover_data=["Market_region", "Regulated", tax_type],
+            color_continuous_scale=px.colors.sequential.Bluyl,
+            title=f"{tax_type.replace('_', ' ').title()} by Country",
+            labels={tax_type: f"{tax_type.replace('_', ' ').title()} (%)"}
+        )
+        
+        fig_tax.update_layout(
+            height=600,
+            margin={"r": 0, "t": 30, "l": 0, "b": 0},
+            coloraxis_colorbar={
+                'title': f"{tax_type.replace('_', ' ').title()} (%)"
+            }
+        )
+        
+        st.plotly_chart(fig_tax, use_container_width=True)
+    else:
+        st.info("No tax rate data available in the dataset.")
     
     # Growth rate (CAGR) map if available
     if 'GGR CAGR' in filtered_df.columns:
@@ -265,6 +212,102 @@ with tab2:
         )
         
         st.plotly_chart(fig_growth, use_container_width=True)
+
+# Responsible Gambling view
+with tab3:
+    st.header("Responsible Gambling Measures by Country")
+    
+    # Check if the responsible gambling columns exist
+    rg_columns = [col for col in df.columns if col in ['Responsible Gambling (iGaming)', 'Stake_limit', 'Deposit_limit', 'Withdrawal_limit']]
+    
+    if 'Responsible Gambling (iGaming)' in rg_columns:
+        # If there's a general RG score column
+        fig_rg = px.choropleth(
+            filtered_df,
+            locations="Country_region",
+            locationmode="country names",
+            color="Responsible Gambling (iGaming)",
+            hover_name="Country_region",
+            hover_data=["Market_region", "Regulated"],
+            color_continuous_scale=px.colors.sequential.Greens,
+            title="Responsible Gambling Score by Country"
+        )
+        
+        fig_rg.update_layout(
+            height=600,
+            margin={"r": 0, "t": 30, "l": 0, "b": 0}
+        )
+        
+        st.plotly_chart(fig_rg, use_container_width=True)
+    
+    # Specific Responsible Gambling measures
+    rg_measures = [col for col in ['Stake_limit', 'Deposit_limit', 'Withdrawal_limit'] if col in df.columns]
+    
+    if rg_measures:
+        st.subheader("Responsible Gambling Measures")
+        selected_measure = st.selectbox("Select Measure", rg_measures)
+        
+        # Create a map for the selected measure
+        fig_measure = px.choropleth(
+            filtered_df,
+            locations="Country_region",
+            locationmode="country names",
+            color=selected_measure,
+            hover_name="Country_region",
+            hover_data=["Market_region", selected_measure],
+            color_discrete_sequence=px.colors.qualitative.Safe,
+            title=f"{selected_measure.replace('_', ' ').title()} Requirements by Country"
+        )
+        
+        fig_measure.update_layout(
+            height=500,
+            margin={"r": 0, "t": 30, "l": 0, "b": 0}
+        )
+        
+        st.plotly_chart(fig_measure, use_container_width=True)
+    
+    # If no responsible gambling data is available
+    if not rg_columns:
+        st.info("No responsible gambling data available in the dataset.")
+        
+    # Table of RG measures
+    if rg_measures:
+        st.subheader("Responsible Gambling Measures by Country")
+        rg_data = filtered_df[['Country_region', 'Market_region'] + rg_measures]
+        st.dataframe(rg_data, use_container_width=True)
+
+# Table view
+with tab4:
+    st.header("iGaming Regulations & Tax Data Table")
+    
+    # Search functionality
+    search = st.text_input("Search for a country")
+    if search:
+        display_df = filtered_df[filtered_df['Country_region'].str.contains(search, case=False)]
+    else:
+        display_df = filtered_df
+        
+    # Column selector
+    available_columns = list(display_df.columns)
+    selected_columns = st.multiselect(
+        "Select columns to display",
+        available_columns,
+        default=["Country_region", "Market_region", "Regulated", "Regulation_type", "Operator_tax", "Player_tax"]
+    ) or available_columns  # If nothing selected, show all columns
+    
+    # Display table
+    st.dataframe(display_df[selected_columns], use_container_width=True)
+    
+    # Export functionality
+    if st.button("Export Data"):
+        csv = display_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            "Download CSV",
+            csv,
+            "igaming_data.csv",
+            "text/csv",
+            key='download-csv'
+        )
 
 # Country details section (displayed below maps)
 st.header("Country Details")
@@ -406,39 +449,6 @@ if selected_country:
             )
             # For actual navigation, you would use:
             # st.script_runner.rerun()
-
-# Table view
-with tab3:
-    st.header("iGaming Regulations & Tax Data Table")
-    
-    # Search functionality
-    search = st.text_input("Search for a country")
-    if search:
-        display_df = filtered_df[filtered_df['Country_region'].str.contains(search, case=False)]
-    else:
-        display_df = filtered_df
-        
-    # Column selector
-    available_columns = list(display_df.columns)
-    selected_columns = st.multiselect(
-        "Select columns to display",
-        available_columns,
-        default=["Country_region", "Market_region", "Regulated", "Regulation_type", "Operator_tax", "Player_tax"]
-    ) or available_columns  # If nothing selected, show all columns
-    
-    # Display table
-    st.dataframe(display_df[selected_columns], use_container_width=True)
-    
-    # Export functionality
-    if st.button("Export Data"):
-        csv = display_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "Download CSV",
-            csv,
-            "igaming_data.csv",
-            "text/csv",
-            key='download-csv'
-        )
 
 # Footer
 st.markdown("---")
