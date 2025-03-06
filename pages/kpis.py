@@ -3,11 +3,13 @@ import pandas as pd
 import numpy as np
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import plotly.graph_objects as go
-import plotly.express as px
+import altair as alt
 from datetime import datetime, timedelta
 import io
 import os
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import matplotlib.ticker as ticker
 
 from utils.auth import check_password, logout, initialize_session_state
 from utils.ip_manager import log_ip_activity
@@ -22,6 +24,15 @@ st.set_page_config(
 
 # Initialize session state variables
 initialize_session_state()
+
+# Formatting functions for charts (kept for the static chart exports)
+def format_currency(x, pos):
+    """Format numbers as currency."""
+    return f'£{x:,.0f}' if x >= 0 else f'-£{abs(x):,.0f}'
+
+def format_number(x, pos):
+    """Format numbers with thousand separators."""
+    return f'{x:,.0f}'
 
 # Function to load KPI data from Google Sheet
 @st.cache_data(ttl=3600)  # Cache data for 1 hour
@@ -72,23 +83,191 @@ def load_kpi_data():
         st.error(f"Error loading KPI data: {str(e)}")
         return pd.DataFrame()
 
-# Function to create an interactive stacked area chart using Plotly
-def create_stacked_area_chart(df, columns, start_date=None, end_date=None, date_format=None, date_interval=None, y_limit=None):
-    """
-    Create an interactive stacked area chart with selected KPIs using Plotly.
+# Function to create a static stacked area chart for exporting to Slack
+def create_static_stacked_area_chart(df, columns, start_date=None, end_date=None, date_format='%d/%m/%Y', date_interval='weekly', y_limit=None):
+    """Create a static stacked area chart for exporting."""
+    plt.style.use('ggplot')
     
-    Parameters:
-        df (DataFrame): The data to plot
-        columns (list): List of columns to include in the chart
-        start_date (datetime, optional): Start date for x-axis
-        end_date (datetime, optional): End date for x-axis
-        date_format (str, optional): Not used in Plotly (handled by Plotly's configuration)
-        date_interval (str, optional): Not used in Plotly (handled by Plotly's configuration)
-        y_limit (float, optional): Optional upper limit for y-axis
-    """
     # Specify colors for the chart
     colors = ['#ffd700', '#0084ff', '#04ff00', '#ff3c00', '#ff0084', '#9932CC', '#00CED1', '#FFA07A']
     
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Filter to columns that exist in the dataframe
+    existing_columns = [col for col in columns if col in df.columns]
+    
+    if not existing_columns:
+        return None
+    
+    # Filter out rows with missing Week Commencing
+    df = df[df['Week Commencing'].notna()].copy()
+    
+    # Sort by date to ensure proper chronological order
+    df = df.sort_values('Week Commencing')
+    
+    # Create a copy of the data for plotting
+    plot_data = df.set_index('Week Commencing')[existing_columns].copy()
+    
+    # Fill NaN values with 0 for proper stacking
+    plot_data = plot_data.fillna(0)
+    
+    # Process date range parameters
+    if start_date is None:
+        # Default to first date in data
+        start_date = plot_data.index.min()
+    
+    if end_date is None:
+        # Default to last date in data
+        end_date = plot_data.index.max()
+    
+    # Create stacked area chart based on the columns
+    ax.stackplot(
+        plot_data.index,
+        plot_data.values.T,
+        labels=plot_data.columns,
+        colors=colors[:len(existing_columns)],
+        alpha=0.8,
+        edgecolor='black',
+    )
+    
+    # Set x-axis limits based on parameters
+    ax.set_xlim(start_date, end_date)
+    
+    # Configure x-axis date ticks based on interval
+    if date_interval == 'daily':
+        ax.xaxis.set_major_locator(mdates.DayLocator())
+    elif date_interval == 'weekly':
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=0))  # Monday
+    elif date_interval == 'monthly':
+        ax.xaxis.set_major_locator(mdates.MonthLocator())
+    
+    # Format the plot
+    ax.set_title('KPI Metrics Over Time', fontsize=14, pad=20)
+    ax.set_xlabel('Week Commencing', fontsize=12)
+    ax.set_ylabel('Value', fontsize=12)
+    ax.tick_params(axis='x', rotation=45, labelsize=10)
+    ax.tick_params(axis='y', labelsize=10)
+    ax.grid(True, linestyle='--', alpha=0.7)
+    
+    # Format x-axis with dates using the specified format
+    ax.xaxis.set_major_formatter(mdates.DateFormatter(date_format))
+    
+    # Format y-axis with proper number formatting
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_number))
+    
+    # Ensure y-axis starts at 0
+    if y_limit:
+        ax.set_ylim(0, y_limit)
+    else:
+        ax.set_ylim(0, None)
+    
+    # Add legend with good placement
+    ax.legend(
+        loc='upper left',
+        fontsize=10,
+        framealpha=0.9,
+        facecolor='white',
+        edgecolor='gray'
+    )
+    
+    plt.tight_layout(pad=3.0)
+    return fig
+
+# Function to create a static EV Added chart for exporting to Slack
+def create_static_ev_added_chart(df, start_date=None, end_date=None, date_format='%d/%m/%Y', date_interval='weekly'):
+    """Create a static EV Added chart for exporting."""
+    plt.style.use('ggplot')
+    
+    # Use gold color for money/value
+    colors = ['#DAA520']  # Golden color
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Make sure EV Added column exists
+    if 'EV Added' not in df.columns:
+        return None
+    
+    # Filter out rows with missing Week Commencing
+    df = df[df['Week Commencing'].notna()].copy()
+    
+    # Sort by date to ensure proper chronological order
+    df = df.sort_values('Week Commencing')
+    
+    # Create a copy of the data for plotting
+    ev_data = df[['Week Commencing', 'EV Added']].copy()
+    
+    # Replace NaN with 0
+    ev_data = ev_data.fillna(0)
+    
+    # Set the index to Week Commencing for plotting
+    ev_data = ev_data.set_index('Week Commencing')
+    
+    # Process date range parameters
+    if start_date is None:
+        # Default to first date in data
+        start_date = ev_data.index.min()
+    
+    if end_date is None:
+        # Default to last date in data
+        end_date = ev_data.index.max()
+    
+    # Plot line for EV Added
+    ax.plot(
+        ev_data.index,
+        ev_data['EV Added'],
+        label='EV Added',
+        color="#000000",
+        marker='o',
+        markersize=5,
+        alpha=0.8
+    )
+    
+    # Create the area chart
+    ax.fill_between(
+        ev_data.index,
+        ev_data['EV Added'],
+        0,  # Fill down to 0
+        color=colors[0],
+        alpha=0.8,
+        label='EV Added'
+    )
+    
+    # Set x-axis limits based on parameters
+    ax.set_xlim(start_date, end_date)
+    
+    # Configure x-axis date ticks based on interval
+    if date_interval == 'daily':
+        ax.xaxis.set_major_locator(mdates.DayLocator())
+    elif date_interval == 'weekly':
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=0))  # Monday
+    elif date_interval == 'monthly':
+        ax.xaxis.set_major_locator(mdates.MonthLocator())
+    
+    # Format the plot
+    ax.set_title('EV Added Over Time', fontsize=14, pad=20)
+    ax.set_xlabel('Week Commencing', fontsize=12)
+    ax.set_ylabel('EV Added (£)', fontsize=12)
+    ax.tick_params(axis='x', rotation=45, labelsize=10)
+    ax.tick_params(axis='y', labelsize=10)
+    ax.grid(True, linestyle='--', alpha=0.7)
+    
+    # Format x-axis with dates using the specified format
+    ax.xaxis.set_major_formatter(mdates.DateFormatter(date_format))
+    
+    # Format y-axis with currency formatting
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_currency))
+    
+    # Ensure y-axis starts at 0
+    ax.set_ylim(0, None)
+    
+    plt.tight_layout(pad=3.0)
+    return fig
+
+# Function to create an interactive stacked area chart with Altair
+def create_interactive_stacked_area_chart(df, columns, start_date=None, end_date=None, y_limit=None):
+    """Create an interactive stacked area chart with Altair."""
     # Filter to columns that exist in the dataframe
     existing_columns = [col for col in columns if col in df.columns]
     
@@ -114,65 +293,53 @@ def create_stacked_area_chart(df, columns, start_date=None, end_date=None, date_
     # Filter by date range
     df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)]
     
-    # Create the figure
-    fig = go.Figure()
-    
-    # Add traces for each KPI
-    for i, col in enumerate(existing_columns):
-        fig.add_trace(
-            go.Scatter(
-                x=df['Week Commencing'],
-                y=df[col].fillna(0),
-                mode='lines',
-                name=col,
-                line=dict(width=0),
-                stackgroup='one',  # This makes it a stacked area chart
-                fillcolor=colors[i % len(colors)],
-                hovertemplate='%{x}<br>%{y:,.0f}<extra>' + col + '</extra>'
-            )
-        )
-    
-    # Update layout
-    fig.update_layout(
-        title='KPI Metrics Over Time',
-        title_font_size=18,
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        ),
-        hovermode='x unified',
-        xaxis=dict(
-            title='Week Commencing',
-            tickformat='%d %b %Y',
-            rangeslider_visible=True
-        ),
-        yaxis=dict(
-            title='Value',
-            rangemode='nonnegative',
-            range=[0, y_limit] if y_limit else None,
-            tickformat=',d'
-        ),
-        height=500,
-        margin=dict(l=40, r=40, t=60, b=40)
+    # Prepare data for Altair
+    # We need to reshape the data from wide to long format
+    plot_data = df[['Week Commencing'] + existing_columns].copy()
+    plot_data = plot_data.melt(
+        id_vars=['Week Commencing'],
+        value_vars=existing_columns,
+        var_name='KPI',
+        value_name='Value'
     )
     
-    return fig
-
-# Function to create an interactive EV Added chart using Plotly
-def create_ev_added_chart(df, start_date=None, end_date=None, date_format=None, date_interval=None):
-    """
-    Create an interactive chart for EV Added over time using Plotly.
+    # Fill NaN values with 0
+    plot_data['Value'] = plot_data['Value'].fillna(0)
     
-    Parameters:
-        df (DataFrame): The data to plot
-        start_date (datetime, optional): Start date for x-axis
-        end_date (datetime, optional): End date for x-axis
-        date_format (str, optional): Not used in Plotly (handled by Plotly's configuration)
-        date_interval (str, optional): Not used in Plotly (handled by Plotly's configuration)
-    """
+    # Create a selection for the legend
+    selection = alt.selection_point(fields=['KPI'], bind='legend')
+    
+    # Create Altair chart
+    chart = alt.Chart(plot_data).mark_area().encode(
+        x=alt.X('Week Commencing:T', title='Week Commencing'),
+        y=alt.Y('sum(Value):Q', title='Value', scale=alt.Scale(domain=[0, y_limit]) if y_limit else alt.Scale(zero=True)),
+        color=alt.Color('KPI:N', scale=alt.Scale(scheme='category10')),
+        tooltip=[
+            alt.Tooltip('Week Commencing:T', title='Date', format='%d %b %Y'),
+            alt.Tooltip('KPI:N', title='Metric'),
+            alt.Tooltip('Value:Q', title='Value', format=',.0f')
+        ],
+        opacity=alt.condition(selection, alt.value(0.8), alt.value(0.2))
+    ).add_params(
+        selection
+    ).properties(
+        title='KPI Metrics Over Time',
+        height=400
+    ).configure_axis(
+        labelFontSize=12,
+        titleFontSize=14
+    ).configure_title(
+        fontSize=16
+    ).configure_legend(
+        titleFontSize=14,
+        labelFontSize=12
+    ).interactive()
+    
+    return chart
+
+# Function to create an interactive EV Added chart with Altair
+def create_interactive_ev_added_chart(df, start_date=None, end_date=None):
+    """Create an interactive EV Added chart with Altair."""
     # Make sure EV Added column exists
     if 'EV Added' not in df.columns:
         st.error("'EV Added' column doesn't exist in the data")
@@ -196,57 +363,53 @@ def create_ev_added_chart(df, start_date=None, end_date=None, date_format=None, 
     # Filter by date range
     df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)]
     
-    # Create the figure
-    fig = go.Figure()
+    # Prepare data for Altair
+    plot_data = df[['Week Commencing', 'EV Added']].copy()
     
-    # Add area fill for EV Added
-    fig.add_trace(
-        go.Scatter(
-            x=df['Week Commencing'],
-            y=df['EV Added'].fillna(0),
-            mode='lines',
-            name='EV Added',
-            fill='tozeroy',
-            line=dict(color='black', width=1),
-            fillcolor='#DAA520',  # Golden color
-            hovertemplate='%{x}<br>£%{y:,.2f}<extra>EV Added</extra>'
-        )
+    # Fill NaN values with 0
+    plot_data['EV Added'] = plot_data['EV Added'].fillna(0)
+    
+    # Create Altair chart with area and line
+    area_chart = alt.Chart(plot_data).mark_area(
+        color='goldenrod',
+        opacity=0.6
+    ).encode(
+        x=alt.X('Week Commencing:T', title='Week Commencing'),
+        y=alt.Y('EV Added:Q', title='EV Added (£)', scale=alt.Scale(zero=True)),
+        tooltip=[
+            alt.Tooltip('Week Commencing:T', title='Date', format='%d %b %Y'),
+            alt.Tooltip('EV Added:Q', title='EV Added', format='£,.2f')
+        ]
     )
     
-    # Add markers for data points
-    fig.add_trace(
-        go.Scatter(
-            x=df['Week Commencing'],
-            y=df['EV Added'].fillna(0),
-            mode='markers',
-            name='',
-            marker=dict(color='black', size=8),
-            showlegend=False,
-            hoverinfo='skip'
-        )
+    # Add line and points on top
+    line_chart = alt.Chart(plot_data).mark_line(
+        color='black'
+    ).encode(
+        x='Week Commencing:T',
+        y='EV Added:Q'
     )
     
-    # Update layout
-    fig.update_layout(
+    point_chart = alt.Chart(plot_data).mark_circle(
+        color='black',
+        size=60
+    ).encode(
+        x='Week Commencing:T',
+        y='EV Added:Q'
+    )
+    
+    # Combine charts
+    combined_chart = (area_chart + line_chart + point_chart).properties(
         title='EV Added Over Time',
-        title_font_size=18,
-        hovermode='x unified',
-        xaxis=dict(
-            title='Week Commencing',
-            tickformat='%d %b %Y',
-            rangeslider_visible=True
-        ),
-        yaxis=dict(
-            title='EV Added (£)',
-            rangemode='nonnegative',
-            tickprefix='£',
-            tickformat=',.0f'
-        ),
-        height=500,
-        margin=dict(l=40, r=40, t=60, b=40)
-    )
+        height=400
+    ).configure_axis(
+        labelFontSize=12,
+        titleFontSize=14
+    ).configure_title(
+        fontSize=16
+    ).interactive()
     
-    return fig
+    return combined_chart
 
 # Main app code
 def main():
@@ -323,16 +486,16 @@ def main():
             start_date = pd.to_datetime(start_date)
             end_date = pd.to_datetime(end_date)
         
-        # Keep date format and interval for backward compatibility, but they're not used in Plotly
+        # Keep date format and interval for backward compatibility with static exports
         date_format = st.sidebar.selectbox(
-            "Date format",
+            "Date format (for exports)",
             ["'%d %b'", "'%Y-%m-%d'", "'%b %Y'"],
             index=0,
             format_func=lambda x: x.replace("'", "")
         )
         
         date_interval = st.sidebar.selectbox(
-            "Date interval",
+            "Date interval (for exports)",
             ["weekly", "daily", "monthly"],
             index=0
         )
@@ -367,7 +530,7 @@ def main():
         ]
         
         # Let users select which KPIs to display
-        st.sidebar.subheader("Select KPIs for Stacked Chart")
+        st.sidebar.subheader("Select KPIs for Chart")
         selected_kpis = []
         
         # Group metrics into categories for easier selection
@@ -400,7 +563,8 @@ def main():
             # First display the stacked area chart with selected KPIs
             st.subheader("KPI Metrics Over Time")
             if selected_kpis:
-                stacked_fig = create_stacked_area_chart(
+                # Create interactive chart with Altair
+                interactive_chart = create_interactive_stacked_area_chart(
                     df,
                     columns=selected_kpis,
                     start_date=start_date,
@@ -408,11 +572,14 @@ def main():
                     y_limit=y_limit
                 )
                 
-                if stacked_fig:
-                    # Display the interactive plot
-                    st.plotly_chart(stacked_fig, use_container_width=True)
+                if interactive_chart:
+                    # Display the interactive chart
+                    st.altair_chart(interactive_chart, use_container_width=True)
                     
-                    # Option to upload to Slack
+                    # Add information about interactivity features
+                    st.info("💡 **Interactive Features:** Click and drag to zoom, double-click to reset, hover for details, click legend items to show/hide metrics.")
+                    
+                    # Option to upload to Slack (need to create static version for this)
                     col1, col2 = st.columns([3, 1])
                     with col1:
                         slack_message = st.text_input(
@@ -421,38 +588,53 @@ def main():
                         )
                     with col2:
                         if st.button("Upload to Slack", key="upload_kpi"):
-                            # Save chart to a temporary file
-                            chart_file = "kpi_chart.png"
-                            stacked_fig.write_image(
-                                chart_file,
-                                width=1200,
-                                height=600,
-                                scale=2
+                            # Create a static version for export
+                            static_chart = create_static_stacked_area_chart(
+                                df,
+                                columns=selected_kpis,
+                                start_date=start_date,
+                                end_date=end_date,
+                                date_format=date_format.replace("'", ""),
+                                date_interval=date_interval,
+                                y_limit=y_limit
                             )
                             
-                            # Upload to Slack
-                            upload_success = upload_to_slack(chart_file, slack_message)
-                            if upload_success:
-                                st.success("Chart uploaded to Slack successfully!")
-                            else:
-                                st.error("Failed to upload chart to Slack.")
+                            if static_chart:
+                                # Save chart to a temporary file
+                                chart_file = "kpi_chart.png"
+                                static_chart.savefig(
+                                    chart_file,
+                                    bbox_inches='tight',
+                                    dpi=300,
+                                    facecolor='white',
+                                    edgecolor='none'
+                                )
+                                
+                                # Upload to Slack
+                                upload_success = upload_to_slack(chart_file, slack_message)
+                                if upload_success:
+                                    st.success("Chart uploaded to Slack successfully!")
+                                else:
+                                    st.error("Failed to upload chart to Slack.")
             else:
                 st.warning("Please select at least one KPI metric to display.")
             
             # Display EV Added chart if the column exists
             if 'EV Added' in df.columns:
                 st.subheader("EV Added Over Time")
-                ev_fig = create_ev_added_chart(
+                
+                # Create interactive EV Added chart with Altair
+                interactive_ev_chart = create_interactive_ev_added_chart(
                     df,
                     start_date=start_date,
                     end_date=end_date
                 )
                 
-                if ev_fig:
-                    # Display the interactive plot
-                    st.plotly_chart(ev_fig, use_container_width=True)
+                if interactive_ev_chart:
+                    # Display the interactive chart
+                    st.altair_chart(interactive_ev_chart, use_container_width=True)
                     
-                    # Option to upload to Slack
+                    # Option to upload to Slack (need to create static version for this)
                     col1, col2 = st.columns([3, 1])
                     with col1:
                         slack_message = st.text_input(
@@ -461,21 +643,32 @@ def main():
                         )
                     with col2:
                         if st.button("Upload to Slack", key="upload_ev"):
-                            # Save chart to a temporary file
-                            chart_file = "ev_chart.png"
-                            ev_fig.write_image(
-                                chart_file,
-                                width=1200,
-                                height=600,
-                                scale=2
+                            # Create a static version for export
+                            static_ev_chart = create_static_ev_added_chart(
+                                df,
+                                start_date=start_date,
+                                end_date=end_date,
+                                date_format=date_format.replace("'", ""),
+                                date_interval=date_interval
                             )
                             
-                            # Upload to Slack
-                            upload_success = upload_to_slack(chart_file, slack_message)
-                            if upload_success:
-                                st.success("Chart uploaded to Slack successfully!")
-                            else:
-                                st.error("Failed to upload chart to Slack.")
+                            if static_ev_chart:
+                                # Save chart to a temporary file
+                                chart_file = "ev_chart.png"
+                                static_ev_chart.savefig(
+                                    chart_file,
+                                    bbox_inches='tight',
+                                    dpi=300,
+                                    facecolor='white',
+                                    edgecolor='none'
+                                )
+                                
+                                # Upload to Slack
+                                upload_success = upload_to_slack(chart_file, slack_message)
+                                if upload_success:
+                                    st.success("Chart uploaded to Slack successfully!")
+                                else:
+                                    st.error("Failed to upload chart to Slack.")
         
         with tab2:
             # Display raw data with filters
