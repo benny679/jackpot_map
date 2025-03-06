@@ -43,7 +43,7 @@ if check_password():
     - **Admin Panel**: (Admin only) View login activity and manage IP settings
     - **User Management**: (Admin only) Manage user accounts and permissions
     - **Manual Value Tracking**: Jackpots that are being tracked manually via Research Ops Daily Value Tracking
-    - **KPIs**: (Admin only) Check how poorly or how well some parts of the RNG project are doing, purely for bragging rights and shit talking
+    - **KPIs**: Check how poorly or how well some parts of the RNG project are doing, purely for bragging rights and shit talking
     """)
 
     # Show some quick stats
