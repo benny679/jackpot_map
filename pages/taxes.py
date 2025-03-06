@@ -783,45 +783,6 @@ if st.session_state.selected_country:
                     else:
                         # Fallback if Jackpot Group column isn't available
                         st.dataframe(jackpot_data, use_container_width=True)
-                        
-                    # Provide a link to the full Jackpot Map dashboard
-                    if st.button(f"View All Jackpots for {st.session_state.selected_country} in Jackpot Map"):
-                        # Set session state variables to be used in the Jackpot Map
-                        st.session_state["jackpot_filter_country"] = st.session_state.selected_country
-                        
-                        # Create URL parameters for navigation
-                        params = {
-                            "page": "dashboard",
-                            "country": st.session_state.selected_country,
-                            "filter": "true"
-                        }
-                        
-                        st.query_params.update({
-                            "page": "dashboard",
-                            "country": st.session_state.selected_country,
-                            "filter": "true"
-                        })
-                else:
-                    st.info(f"No jackpot data available for {st.session_state.selected_country}.")
-                    st.warning("No jackpots found in Column C of the Jackpot Map worksheet for this country.")
-                    
-                    # Help text to explain how to address this
-                    with st.expander("How to fix this"):
-                        st.markdown("""
-                        To fix this, you can:
-                        
-                        1. Check if your country name matches exactly what's in Column C of the Jackpot Map worksheet
-                        2. Update the country-to-region mapping in the `connect_to_jackpots` function
-                        3. Make sure the "Low Vol JPS" Google Sheet and "Jackpot Map" worksheet are accessible
-                        """)
-                    
-                    # Still provide a link to the jackpot map
-                    if st.button("Go to Jackpot Map Dashboard"):
-                        st.query_params.update({"page": "dashboard"})
-    else:
-        st.warning(f"No data available for {st.session_state.selected_country}")
-else:
-    st.info("Click on a country in the map or select from the dropdown to see detailed information")
 
 # Footer
 st.markdown("---")
