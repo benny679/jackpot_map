@@ -735,7 +735,7 @@ def main():
                     
                     if chart_type == "Static (Matplotlib)":
                         # Create a static matplotlib chart
-                        fig, ax = plt.subplots(figsize=(10, 6))
+                        fig, ax = plt.subplots(figsize=(8, 4))
                         
                         # Get the filtered data
                         filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
@@ -749,8 +749,8 @@ def main():
                             marker='o',
                             linestyle='-',
                             color='black',
-                            linewidth=2,
-                            markersize=8
+                            linewidth=0.5,
+                            markersize=2
                         )
                         
                         # Fill the area
