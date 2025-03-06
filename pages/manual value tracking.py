@@ -3,24 +3,22 @@ import pandas as pd
 import numpy as np
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-# Import additional plotting libraries
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.ticker as ticker
-import altair as alt
 import plotly.graph_objects as go
-import plotly.subplots as sp
+import plotly.express as px
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta, date
 import io
 import os
+import tempfile
 
 from utils.auth import check_password, logout, initialize_session_state
 from utils.ip_manager import log_ip_activity
 from utils.data_loader import upload_to_slack
 
-# Set environment variables from secrets for the entire application 
-# (add this to fix the Slack upload functionality)
+# Set environment variables from secrets for the entire application
 if 'slack' in st.secrets:
     os.environ['SLACK_TOKEN'] = st.secrets.slack.slack_token
     os.environ['SLACK_CHANNEL_ID'] = st.secrets.slack.channel_id
@@ -118,27 +116,21 @@ def create_level_plot(df, casino, game, region, start_date, end_date, plot_type=
     if num_levels == 0:
         st.warning("No level data found for the selected criteria.")
         return None
-        
-    # Set datetime as index for proper time-series plotting
-    plot_df = filtered_df.set_index("DateTime").copy()
-    
-    # For Streamlit Native charts, we'll return the dataframe
-    if plot_type == "Streamlit Native":
-        return plot_df[level_columns]
     
     # Create plot based on selected type
     if plot_type == "Matplotlib":
-        return create_matplotlib_plot(plot_df, level_columns, casino, game, region)
-    elif plot_type == "Plotly":
-        return create_plotly_plot(plot_df, level_columns, casino, game, region)
-    elif plot_type == "Altair":
-        return create_altair_plot(plot_df, level_columns, casino, game, region)
+        return create_matplotlib_plot(filtered_df, level_columns, casino, game, region)
+    elif plot_type == "Plotly Interactive":
+        return create_plotly_plot(filtered_df, level_columns, casino, game, region)
     else:
         # Default to Matplotlib if type not recognized
-        return create_matplotlib_plot(plot_df, level_columns, casino, game, region)
+        return create_matplotlib_plot(filtered_df, level_columns, casino, game, region)
 
-def create_matplotlib_plot(plot_df, level_columns, casino, game, region):
+def create_matplotlib_plot(filtered_df, level_columns, casino, game, region):
     """Create a Matplotlib plot of level data."""
+    # Set datetime as index for proper time-series plotting
+    plot_df = filtered_df.set_index("DateTime").copy()
+    
     num_levels = len(level_columns)
     
     # Set up the figure
@@ -158,7 +150,10 @@ def create_matplotlib_plot(plot_df, level_columns, casino, game, region):
         row, col = divmod(i, cols)
         
         # Handle case where axs is a single subplot
-        ax = axs[row, col] if num_levels > 1 or (rows == 1 and cols > 1) else axs
+        if num_levels == 1:
+            ax = axs[0, 0]
+        else:
+            ax = axs[row, col]
         
         ax.plot(plot_df.index, plot_df[level], marker='o', linestyle='-', label=level)
         ax.set_title(f"{casino} - {game} - {level}")
@@ -177,86 +172,42 @@ def create_matplotlib_plot(plot_df, level_columns, casino, game, region):
     plt.tight_layout()
     return fig
 
-def create_plotly_plot(plot_df, level_columns, casino, game, region):
+def create_plotly_plot(filtered_df, level_columns, casino, game, region):
     """Create a Plotly plot of level data."""
+    # Create a proper datetime index
+    filtered_df = filtered_df.sort_values("DateTime")
+    
     num_levels = len(level_columns)
     
-    # Set up the figure
-    cols = min(2, num_levels)  # Maximum 2 columns
-    rows = (num_levels + cols - 1) // cols
+    # Create a figure with subplots
+    fig = make_subplots(
+        rows=num_levels, 
+        cols=1,
+        subplot_titles=[f"{level}" for level in level_columns],
+        vertical_spacing=0.1
+    )
     
-    # Create subplots
-    fig = make_subplots(rows=rows, cols=cols, subplot_titles=[f"{casino} - {game} - {level}" for level in level_columns])
-    
-    # Plot each level
+    # Add traces for each level
     for i, level in enumerate(level_columns):
-        row, col = divmod(i, cols)
-        row += 1  # Plotly is 1-indexed
-        col += 1  # Plotly is 1-indexed
-        
         fig.add_trace(
             go.Scatter(
-                x=plot_df.index,
-                y=plot_df[level],
+                x=filtered_df["DateTime"],
+                y=filtered_df[level],
                 mode='lines+markers',
-                name=level,
-                line=dict(width=2),
-                marker=dict(size=8)
+                name=level
             ),
-            row=row, col=col
+            row=i+1, 
+            col=1
         )
-        
-        fig.update_xaxes(title_text="Date", row=row, col=col)
-        fig.update_yaxes(title_text="Value", row=row, col=col)
     
     # Update layout
     fig.update_layout(
-        height=300 * rows,
-        width=1200,
-        showlegend=True,
-        title_text=f"{casino} - {game} - {region} Levels",
-        title_x=0.5,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        title_text=f"{casino} - {game} - {region}",
+        height=300 * num_levels,
+        showlegend=True
     )
     
     return fig
-
-def create_altair_plot(plot_df, level_columns, casino, game, region):
-    """Create Altair plots of level data."""
-    # Reset index to have DateTime as a column
-    plot_df = plot_df.reset_index()
-    
-    # Create a list to hold individual charts
-    charts = []
-    
-    # For each level, create a chart
-    for level in level_columns:
-        chart = alt.Chart(plot_df).mark_line(point=True).encode(
-            x=alt.X('DateTime:T', title='Date'),
-            y=alt.Y(f'{level}:Q', title='Value'),
-            tooltip=[
-                alt.Tooltip('DateTime:T', title='Date'),
-                alt.Tooltip(f'{level}:Q', title='Value')
-            ]
-        ).properties(
-            title=f"{casino} - {game} - {level}",
-            width=500,
-            height=300
-        ).interactive()
-        
-        charts.append(chart)
-    
-    # Combine charts into a vertical layout
-    combined_chart = alt.vconcat(*charts).resolve_scale(
-        x='shared'
-    ).properties(
-        title=alt.TitleParams(
-            text=f"{casino} - {game} - {region} Levels",
-            fontSize=20
-        )
-    )
-    
-    return combined_chart
 
 # Main app code
 def main():
@@ -292,10 +243,11 @@ def main():
         st.sidebar.header("Filters")
         
         # Add a plot type selector to the sidebar
-        plot_type = st.sidebar.selectbox(
+        plot_type = st.sidebar.radio(
             "Chart Type",
-            ["Matplotlib", "Plotly", "Altair", "Streamlit Native"],
-            index=0
+            ["Matplotlib", "Plotly Interactive"],
+            index=0,
+            help="Select the chart type to visualize your data"
         )
 
         # Store the plot type in session state
@@ -389,20 +341,24 @@ def main():
         
         # Display plot if available
         if st.session_state.plot_generated and st.session_state.current_plot:
-            st.subheader(f"Level Values for {st.session_state.plot_settings['casino']} - {st.session_state.plot_settings['game']} - {st.session_state.plot_settings['region']}")
-            
-            # Display plot based on type
-            if st.session_state.plot_type == "Matplotlib":
-                st.pyplot(st.session_state.current_plot)
-            elif st.session_state.plot_type == "Plotly":
-                st.plotly_chart(st.session_state.current_plot, use_container_width=True)
-            elif st.session_state.plot_type == "Altair":
-                st.altair_chart(st.session_state.current_plot, use_container_width=True)
-            elif st.session_state.plot_type == "Streamlit Native":
-                # For native charts, current_plot is the dataframe
-                st.line_chart(st.session_state.current_plot)
-            else:
-                st.pyplot(st.session_state.current_plot)
+            try:
+                st.subheader(f"Level Values for {st.session_state.plot_settings['casino']} - {st.session_state.plot_settings['game']} - {st.session_state.plot_settings['region']}")
+                
+                # Display plot based on type
+                if st.session_state.plot_type == "Matplotlib":
+                    st.pyplot(st.session_state.current_plot)
+                elif st.session_state.plot_type == "Plotly Interactive":
+                    # For Plotly, we need to ensure the data is correctly formatted
+                    if st.session_state.current_plot is not None:
+                        st.plotly_chart(st.session_state.current_plot, use_container_width=True)
+                    else:
+                        st.error("Error generating Plotly chart.")
+                else:
+                    # Default to matplotlib
+                    st.pyplot(st.session_state.current_plot)
+            except Exception as e:
+                st.error(f"Error displaying chart: {str(e)}")
+                st.info("Try selecting a different chart type from the sidebar.")
                 
             # Debug Slack settings - show only if the plot is already generated
             debug_slack = st.checkbox("Debug Slack Settings")
@@ -437,11 +393,10 @@ def main():
                 if st.button("Export to Slack"):
                     try:
                         # Create temp file with proper extension
-                        import tempfile
                         temp_dir = tempfile.gettempdir()
                         plot_file = os.path.join(temp_dir, "manual_tracking_plot.png")
                         
-                        # Save the plot without closing it
+                        # Save the plot based on type
                         if st.session_state.plot_type == "Matplotlib":
                             st.session_state.current_plot.savefig(
                                 plot_file,
@@ -450,19 +405,11 @@ def main():
                                 facecolor='white',
                                 edgecolor='none'
                             )
-                        elif st.session_state.plot_type == "Plotly":
+                        elif st.session_state.plot_type == "Plotly Interactive":
                             # Save Plotly chart as image
+                            img_bytes = st.session_state.current_plot.to_image(format="png", scale=2)
                             with open(plot_file, 'wb') as f:
-                                f.write(st.session_state.current_plot.to_image(format="png", scale=2))
-                        elif st.session_state.plot_type == "Altair":
-                            # For Altair, we need to save a screenshot of the rendered chart
-                            # This is a workaround since we can't directly save Altair charts as images
-                            st.error("Exporting Altair charts to Slack is not supported. Please use Matplotlib or Plotly.")
-                            return
-                        elif st.session_state.plot_type == "Streamlit Native":
-                            # For Streamlit native, we need a screenshot too
-                            st.error("Exporting Streamlit native charts to Slack is not supported. Please use Matplotlib or Plotly.")
-                            return
+                                f.write(img_bytes)
                         
                         st.info(f"Sending plot to Slack channel...")
                         
@@ -472,11 +419,14 @@ def main():
                             os.environ['SLACK_CHANNEL_ID'] = st.secrets.slack.channel_id
                         
                         # Print info about the file being uploaded
-                        st.write(f"File exists: {os.path.exists(plot_file)}, Size: {os.path.getsize(plot_file) if os.path.exists(plot_file) else 'N/A'}")
+                        if os.path.exists(plot_file):
+                            st.write(f"File exists with size: {os.path.getsize(plot_file)} bytes")
+                        else:
+                            st.error(f"File was not created properly at {plot_file}")
+                            return
                         
                         # Upload to Slack with detailed error handling
                         try:
-                            from utils.data_loader import upload_to_slack
                             upload_success = upload_to_slack(plot_file, slack_message)
                             if upload_success:
                                 st.success("Plot uploaded to Slack successfully!")
@@ -487,39 +437,41 @@ def main():
                     except Exception as e:
                         st.error(f"Error preparing plot for upload: {str(e)}")
             
-            # Add direct download option for the plot
-            import io
-            buf = io.BytesIO()
-            
-            if st.session_state.plot_type == "Matplotlib":
-                st.session_state.current_plot.savefig(buf, format="png", bbox_inches='tight', dpi=300)
-                download_format = "png"
-                mime_type = "image/png"
-            elif st.session_state.plot_type == "Plotly":
-                buf.write(st.session_state.current_plot.to_image(format="png", scale=2))
-                download_format = "png"
-                mime_type = "image/png"
-            elif st.session_state.plot_type == "Altair":
-                # Altair charts can't be directly saved as images in this context
-                # Convert to a JSON spec instead
-                chart_json = st.session_state.current_plot.to_json()
-                buf.write(chart_json.encode())
-                download_format = "json"
-                mime_type = "application/json"
-            elif st.session_state.plot_type == "Streamlit Native":
-                # For Streamlit native, download the data as CSV
-                buf.write(st.session_state.current_plot.to_csv().encode())
-                download_format = "csv"
-                mime_type = "text/csv"
-            
-            buf.seek(0)
-            
-            st.download_button(
-                label="Download Plot",
-                data=buf,
-                file_name=f"manual_tracking_{st.session_state.plot_settings['casino']}_{st.session_state.plot_settings['game']}_{st.session_state.plot_settings['region']}.{download_format}",
-                mime=mime_type
-            )
+            # Add download options for the plot
+            try:
+                if st.session_state.plot_type == "Matplotlib":
+                    buf = io.BytesIO()
+                    st.session_state.current_plot.savefig(buf, format="png", bbox_inches='tight', dpi=300)
+                    buf.seek(0)
+                    
+                    st.download_button(
+                        label="Download Plot as PNG",
+                        data=buf,
+                        file_name=f"manual_tracking_{st.session_state.plot_settings['casino']}_{st.session_state.plot_settings['game']}_{st.session_state.plot_settings['region']}.png",
+                        mime="image/png"
+                    )
+                elif st.session_state.plot_type == "Plotly Interactive":
+                    # For Plotly, offer both image and HTML download options
+                    img_bytes = st.session_state.current_plot.to_image(format="png", scale=2)
+                    html_bytes = st.session_state.current_plot.to_html(include_plotlyjs="cdn").encode()
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.download_button(
+                            label="Download as PNG",
+                            data=img_bytes,
+                            file_name=f"manual_tracking_{st.session_state.plot_settings['casino']}_{st.session_state.plot_settings['game']}_{st.session_state.plot_settings['region']}.png",
+                            mime="image/png"
+                        )
+                    with col2:
+                        st.download_button(
+                            label="Download as HTML",
+                            data=html_bytes,
+                            file_name=f"manual_tracking_{st.session_state.plot_settings['casino']}_{st.session_state.plot_settings['game']}_{st.session_state.plot_settings['region']}.html",
+                            mime="text/html"
+                        )
+            except Exception as e:
+                st.error(f"Error preparing download: {str(e)}")
         
         # Display raw data based on session state if plot is generated, otherwise use current filters
         st.subheader("Raw Data")
