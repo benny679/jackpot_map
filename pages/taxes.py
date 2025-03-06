@@ -14,9 +14,6 @@ import gspread
 from google.oauth2 import service_account
 import re
 
-# Set page configuration (must be first Streamlit command)
-st.set_page_config(page_title="Global iGaming Regulation & Tax Map", layout="wide")
-
 # Initialize session state variables
 initialize_session_state()
 
