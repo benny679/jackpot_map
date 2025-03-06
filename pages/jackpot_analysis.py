@@ -472,7 +472,7 @@ def main():
                 if st.sidebar.button("Use Agg Backend"):
                     plt.switch_backend('Agg')
                     st.sidebar.success(f"Switched to Agg backend")
-                    st.rerun()
+                    st.experimental_rerun()
         
         # Input form
         with st.form("jackpot_analysis_form"):
@@ -510,7 +510,11 @@ def main():
                 st.session_state["last_days"] = days
                 st.session_state["last_used_mock"] = use_mock_data
                 
-                analyze_jackpot(jackpot_id, days, use_mock_data)
+                analyze_jackpot(
+                    jackpot_id=jackpot_id, 
+                    days=days, 
+                    use_mock_data=use_mock_data
+                )
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
                 import traceback
@@ -524,7 +528,15 @@ def main():
                 
                 if st.button("Rerun Previous Analysis"):
                     use_mock = st.session_state.get("last_used_mock", use_mock_data)
-                    analyze_jackpot(st.session_state["last_jackpot_id"], st.session_state["last_days"], use_mock)
+                    try:
+                        analyze_jackpot(
+                            jackpot_id=st.session_state["last_jackpot_id"], 
+                            days=st.session_state["last_days"], 
+                            use_mock_data=use_mock
+                        )
+                    except Exception as e:
+                        st.error(f"Error rerunning analysis: {e}")
+                        st.info("Try running a new analysis instead.")
         
         # Additional help section
         with st.expander("Help & Info"):
