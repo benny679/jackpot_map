@@ -259,9 +259,9 @@ def create_static_ev_added_chart(df, start_date=None, end_date=None, date_format
         ax.xaxis.set_major_locator(mdates.MonthLocator())
     
     # Format the plot
-    ax.set_title('EV Added Over Time', fontsize=14, pad=20)
-    ax.set_xlabel('Week Commencing', fontsize=12)
-    ax.set_ylabel('EV Added (£)', fontsize=12)
+    ax.set_title('EV Added Over Time', fontsize=6, pad=20)
+    ax.set_xlabel('Week Commencing', fontsize=6)
+    ax.set_ylabel('EV Added (£)', fontsize=6)
     ax.tick_params(axis='x', rotation=45, labelsize=10)
     ax.tick_params(axis='y', labelsize=10)
     ax.grid(True, linestyle='--', alpha=0.7)
@@ -731,8 +731,8 @@ def main():
                             marker='o',
                             linestyle='-',
                             color='black',
-                            linewidth=2,
-                            markersize=8
+                            linewidth=1,
+                            markersize=4
                         )
                         
                         # Fill the area
