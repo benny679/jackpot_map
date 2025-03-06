@@ -770,7 +770,8 @@ if st.session_state.selected_country:
 
                 with col2:
                     # Growth rate if available
-                    if 'GGR CAGR' in country_data.columns and pd.notna(country_data['GGR CAGR'].iloc[0]): st.metric(
+                    if 'GGR CAGR' in country_data.columns and pd.notna(country_data['GGR CAGR'].iloc[0]):
+                        st.metric(
                             "Growth Rate (CAGR)",
                             f"{country_data['GGR CAGR'].iloc[0]}%",
                             delta=None
