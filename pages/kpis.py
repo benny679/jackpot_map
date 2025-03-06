@@ -233,7 +233,7 @@ def create_static_ev_added_chart(df, start_date=None, end_date=None, date_format
         label='EV Added',
         color="#000000",
         marker='o',
-        markersize=2,
+        markersize=5,
         alpha=0.8
     )
     
@@ -259,9 +259,9 @@ def create_static_ev_added_chart(df, start_date=None, end_date=None, date_format
         ax.xaxis.set_major_locator(mdates.MonthLocator())
     
     # Format the plot
-    ax.set_title('EV Added Over Time', fontsize=2, pad=20)
-    ax.set_xlabel('Week Commencing', fontsize=6)
-    ax.set_ylabel('EV Added (£)', fontsize=6)
+    ax.set_title('EV Added Over Time', fontsize=14, pad=20)
+    ax.set_xlabel('Week Commencing', fontsize=12)
+    ax.set_ylabel('EV Added (£)', fontsize=12)
     ax.tick_params(axis='x', rotation=45, labelsize=10)
     ax.tick_params(axis='y', labelsize=10)
     ax.grid(True, linestyle='--', alpha=0.7)
@@ -419,7 +419,7 @@ def create_interactive_ev_added_chart(df, start_date=None, end_date=None):
     chart = alt.layer(area, line, points).properties(
         title=alt.TitleParams(
             text='EV Added Over Time',
-            fontSize=8
+            fontSize=16
         ),
         height=400,
         width='container'
@@ -633,7 +633,7 @@ def main():
                             filtered_df = filtered_df[['Week Commencing'] + existing_columns].set_index('Week Commencing')
                             st.area_chart(filtered_df, use_container_width=True)
                     
-                    # Option to upload to Slack (need to create static version for this)
+                    # -------------------- REPLACEMENT SECTION 1 START --------------------
                     col1, col2 = st.columns([3, 1])
                     with col1:
                         slack_message = st.text_input(
@@ -641,253 +641,102 @@ def main():
                             value="KPI Metrics Chart"
                         )
                     with col2:
-                        if st.button("Upload to Slack", key="upload_kpi"):
-                            # Create a static version for export
-                            static_chart = create_static_stacked_area_chart(
-                                df,
-                                columns=selected_kpis,
-                                start_date=start_date,
-                                end_date=end_date,
-                                date_format=date_format.replace("'", ""),
-                                date_interval=date_interval,
-                                y_limit=y_limit
-                            )
+                        if st.button("Export Current Chart to Slack", key="export_kpi"):
+                            # Check which chart type is currently displayed
+                            current_chart_type = chart_type  # This is from the radio selection
                             
-                            if static_chart:
-                                # Save chart to a temporary file
-                                chart_file = "kpi_chart.png"
-                                static_chart.savefig(
-                                    chart_file,
-                                    bbox_inches='tight',
-                                    dpi=300,
-                                    facecolor='white',
-                                    edgecolor='none'
+                            if current_chart_type == "Static (Matplotlib)":
+                                # Use the existing Matplotlib export functionality
+                                static_chart = create_static_stacked_area_chart(
+                                    df,
+                                    columns=selected_kpis,
+                                    start_date=start_date,
+                                    end_date=end_date,
+                                    date_format=date_format.replace("'", ""),
+                                    date_interval=date_interval,
+                                    y_limit=y_limit
                                 )
                                 
-                                # Upload to Slack
-                                upload_success = upload_to_slack(chart_file, slack_message)
-                                if upload_success:
-                                    st.success("Chart uploaded to Slack successfully!")
-                                else:
-                                    st.error("Failed to upload chart to Slack.")
-            else:
-                st.warning("Please select at least one KPI metric to display.")
-            
-            # Display EV Added chart if the column exists
-            if 'EV Added' in df.columns:
-                st.subheader("EV Added Over Time")
-                
-                # Create interactive EV Added chart with Altair
-                interactive_ev_chart = create_interactive_ev_added_chart(
-                    df,
-                    start_date=start_date,
-                    end_date=end_date
-                )
-                
-                if interactive_ev_chart:
-                        # Debug information to show what's being plotted
-                    with st.expander("Debug EV Added Data", expanded=False):
-                        debug_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
-                        debug_df = debug_df[['Week Commencing', 'EV Added']].sort_values('Week Commencing')
-                        st.write("EV Added values being plotted:")
-                        st.dataframe(debug_df)
-                        
-                        # Show stats
-                        non_zero = (debug_df['EV Added'] > 0).sum()
-                        total = len(debug_df)
-                        st.write(f"Non-zero values: {non_zero} out of {total} rows")
-                        st.write(f"Sum of EV Added: £{debug_df['EV Added'].sum():,.2f}")
-                        st.write(f"Max EV Added: £{debug_df['EV Added'].max():,.2f}")
-                    
-                    # Add a toggle for chart type
-                    chart_type = st.radio(
-                        "Chart Type",
-                        ["Interactive (Altair)", "Static (Matplotlib)", "Simple (Streamlit)"],
-                        horizontal=True,
-                        key="ev_chart_type"
-                    )
-                    
-                    if chart_type == "Interactive (Altair)" and interactive_ev_chart is not None:
-                        try:
-                            st.altair_chart(interactive_ev_chart, use_container_width=True)
-                        except Exception as e:
-                            st.error(f"Error rendering Altair chart: {str(e)}")
-                            st.info("Falling back to Matplotlib chart...")
-                            chart_type = "Static (Matplotlib)"
-                    
-                    if chart_type == "Static (Matplotlib)":
-                        # Create a static matplotlib chart
-                        fig, ax = plt.subplots(figsize=(8, 4))
-                        
-                        # Get the filtered data
-                        filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
-                        filtered_df = filtered_df[['Week Commencing', 'EV Added']].sort_values('Week Commencing')
-                        filtered_df['EV Added'] = pd.to_numeric(filtered_df['EV Added'], errors='coerce').fillna(0)
-                        
-                        # Plot the data
-                        ax.plot(
-                            filtered_df['Week Commencing'],
-                            filtered_df['EV Added'],
-                            marker='o',
-                            linestyle='-',
-                            color='black',
-                            linewidth=1,
-                            markersize=2
-                        )
-                        
-                        # Fill the area
-                        ax.fill_between(
-                            filtered_df['Week Commencing'],
-                            filtered_df['EV Added'],
-                            color='goldenrod',
-                            alpha=0.6
-                        )
-                        
-                        # Format the chart
-                        ax.set_title('EV Added Over Time', fontsize=16)
-                        ax.set_xlabel('Week Commencing', fontsize=12)
-                        ax.set_ylabel('EV Added (£)', fontsize=12)
-                        ax.grid(True, linestyle='--', alpha=0.7)
-                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b'))
-                        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, pos: f'£{x:,.0f}'))
-                        plt.xticks(rotation=45)
-                        plt.tight_layout()
-                        
-                        # Display the matplotlib chart
-                        st.pyplot(fig)
-                    
-                    elif chart_type == "Simple (Streamlit)":
-                        # Use Streamlit's built-in chart
-                        filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
-                        filtered_df = filtered_df[['Week Commencing', 'EV Added']].sort_values('Week Commencing')
-                        filtered_df['EV Added'] = pd.to_numeric(filtered_df['EV Added'], errors='coerce').fillna(0)
-                        filtered_df.set_index('Week Commencing', inplace=True)
-                        
-                        # Display with Streamlit's built-in chart
-                        st.line_chart(filtered_df['EV Added'], use_container_width=True)
-                    
-                    # Option to upload to Slack (need to create static version for this)
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        slack_message = st.text_input(
-                            "Slack message (optional)",
-                            value="EV Added Chart"
-                        )
-                    with col2:
-                        if st.button("Upload to Slack", key="upload_ev"):
-                            # Create a static version for export
-                            static_ev_chart = create_static_ev_added_chart(
-                                df,
-                                start_date=start_date,
-                                end_date=end_date,
-                                date_format=date_format.replace("'", ""),
-                                date_interval=date_interval
-                            )
-                            
-                            if static_ev_chart:
-                                # Save chart to a temporary file
-                                chart_file = "ev_chart.png"
-                                static_ev_chart.savefig(
-                                    chart_file,
-                                    bbox_inches='tight',
-                                    dpi=50,
-                                    facecolor='white',
-                                    edgecolor='none'
-                                )
-                                
-                                # Upload to Slack
-                                upload_success = upload_to_slack(chart_file, slack_message)
-                                if upload_success:
-                                    st.success("Chart uploaded to Slack successfully!")
-                                else:
-                                    st.error("Failed to upload chart to Slack.")
-        
-        with tab2:
-            # Display raw data with filters
-            st.subheader("Raw KPI Data")
-            
-            # Filter data based on date range
-            filtered_df = df[
-                (df['Week Commencing'] >= start_date) & 
-                (df['Week Commencing'] <= end_date)
-            ].copy()
-            
-            # Sort by date
-            filtered_df = filtered_df.sort_values('Week Commencing', ascending=False)
-            
-            # Column selection
-            with st.expander("Select Columns to Display", expanded=False):
-                all_columns = df.columns.tolist()
-                selected_columns = st.multiselect(
-                    "Select columns",
-                    all_columns,
-                    default=['Week Commencing'] + selected_kpis
-                )
-            
-            if not selected_columns:
-                selected_columns = ['Week Commencing'] + (selected_kpis if selected_kpis else [])
-            
-            # Make sure selected columns exist in the dataframe
-            display_columns = [col for col in selected_columns if col in filtered_df.columns]
-            
-            if not display_columns:
-                st.warning("No columns selected for display.")
-            else:
-                # Format the Week Commencing column for display
-                if 'Week Commencing' in display_columns:
-                    filtered_df['Week Commencing'] = filtered_df['Week Commencing'].dt.strftime('%Y-%m-%d')
-                
-                # Display the filtered dataframe
-                st.dataframe(
-                    filtered_df[display_columns],
-                    use_container_width=True
-                )
-        
-        with tab3:
-            # Export options
-            st.subheader("Export Data")
-            
-            # Filter data based on date range
-            export_df = df[
-                (df['Week Commencing'] >= start_date) & 
-                (df['Week Commencing'] <= end_date)
-            ].copy()
-            
-            # Format date for export
-            export_df['Week Commencing'] = export_df['Week Commencing'].dt.strftime('%Y-%m-%d')
-            
-            # Download as CSV
-            st.download_button(
-                label="Download as CSV",
-                data=export_df.to_csv(index=False).encode('utf-8'),
-                file_name=f"kpi_data_{start_date.strftime('%Y%m%d')}_to_{end_date.strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
-            
-            # Download as Excel
-            try:
-                buffer = io.BytesIO()
-                with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                    export_df.to_excel(writer, sheet_name='KPI Data', index=False)
-                    # Auto-adjust columns' width
-                    for column in export_df:
-                        column_width = max(export_df[column].astype(str).map(len).max(), len(column))
-                        col_idx = export_df.columns.get_loc(column)
-                        writer.sheets['KPI Data'].set_column(col_idx, col_idx, column_width)
-                
-                buffer.seek(0)
-                
-                st.download_button(
-                    label="Download as Excel",
-                    data=buffer,
-                    file_name=f"kpi_data_{start_date.strftime('%Y%m%d')}_to_{end_date.strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            except Exception as e:
-                st.error(f"Error creating Excel file: {str(e)}")
-            
-    else:
-        st.warning("Please log in to access the KPI dashboard.")
-
-if __name__ == "__main__":
-    main()
+                                if static_chart:
+                                    chart_file = "kpi_chart.png"
+                                    static_chart.savefig(
+                                        chart_file,
+                                        bbox_inches='tight',
+                                        dpi=300,
+                                        facecolor='white',
+                                        edgecolor='none'
+                                    )
+                                    
+                                    upload_success = upload_to_slack(chart_file, slack_message)
+                                    if upload_success:
+                                        st.success("Matplotlib chart uploaded to Slack successfully!")
+                                    else:
+                                        st.error("Failed to upload chart to Slack.")
+                                        
+                            elif current_chart_type == "Interactive (Altair)":
+                                try:
+                                    # For Altair, we need to save as HTML or as PNG via Selenium
+                                    # As a simpler solution, we'll fall back to Matplotlib for export
+                                    st.info("Converting Altair chart for export...")
+                                    
+                                    static_chart = create_static_stacked_area_chart(
+                                        df,
+                                        columns=selected_kpis,
+                                        start_date=start_date,
+                                        end_date=end_date,
+                                        date_format=date_format.replace("'", ""),
+                                        date_interval=date_interval,
+                                        y_limit=y_limit
+                                    )
+                                    
+                                    if static_chart:
+                                        chart_file = "kpi_chart.png"
+                                        static_chart.savefig(
+                                            chart_file,
+                                            bbox_inches='tight',
+                                            dpi=300,
+                                            facecolor='white',
+                                            edgecolor='none'
+                                        )
+                                        
+                                        upload_success = upload_to_slack(chart_file, slack_message)
+                                        if upload_success:
+                                            st.success("Streamlit chart (converted to static) uploaded to Slack successfully!")
+                                        else:
+                                            st.error("Failed to upload chart to Slack.")
+                                except Exception as e:
+                                    st.error(f"Error exporting Streamlit chart: {str(e)}")
+                    # -------------------- REPLACEMENT SECTION 1 END --------------------white',
+                                            edgecolor='none'
+                                        )
+                                        
+                                        upload_success = upload_to_slack(chart_file, slack_message)
+                                        if upload_success:
+                                            st.success("Altair chart (converted to static) uploaded to Slack successfully!")
+                                        else:
+                                            st.error("Failed to upload chart to Slack.")
+                                except Exception as e:
+                                    st.error(f"Error exporting Altair chart: {str(e)}")
+                                    
+                            elif current_chart_type == "Simple (Streamlit)":
+                                try:
+                                    # For Streamlit charts, we also need to create a static version
+                                    st.info("Converting Streamlit chart for export...")
+                                    
+                                    static_chart = create_static_stacked_area_chart(
+                                        df,
+                                        columns=selected_kpis,
+                                        start_date=start_date,
+                                        end_date=end_date,
+                                        date_format=date_format.replace("'", ""),
+                                        date_interval=date_interval,
+                                        y_limit=y_limit
+                                    )
+                                    
+                                    if static_chart:
+                                        chart_file = "kpi_chart.png"
+                                        static_chart.savefig(
+                                            chart_file,
+                                            bbox_inches='tight',
+                                            dpi=300,
+                                            facecolor='
