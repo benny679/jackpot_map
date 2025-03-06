@@ -130,29 +130,16 @@ def load_data():
         # Create DataFrame
         df = pd.DataFrame(data_rows, columns=cleaned_headers)
         
-        # Find and rename key columns to standard names
-        column_mapping = {}
-        
-        # Look for Country_region column or equivalent
-        country_col = next((col for col in df.columns if "country" in col.lower() and "region" in col.lower()), None)
-        if country_col and country_col != "Country_region":
-            column_mapping[country_col] = "Country_region"
-            
-        # Look for Market_region column or equivalent
-        market_col = next((col for col in df.columns if "market" in col.lower() and "region" in col.lower()), None)
-        if market_col and market_col != "Market_region":
-            column_mapping[market_col] = "Market_region"
-        
-        # Apply mapping if needed
-        if column_mapping:
-            df = df.rename(columns=column_mapping)
-        
-        # Log the columns we found
-        # Commented out to prevent logging columns in the app
-        # st.write("Found columns:", df.columns.tolist())
+        # Find and rename key columns to standard names - these are the expected columns
+        expected_columns = [
+            "Country_region", "Market_region", "Regulated", "Regulation_type", 
+            "Offshore?", "Residents?", "Casino", "iGaming", "Betting", "iBetting", 
+            "Operator_tax", "Player_tax", "Accounts_#", "Stake_limit", 
+            "Deposit_limit", "Withdrawal_limit", "Priority region", "Triggering reviews", "Notes"
+        ]
         
         # Convert numeric columns
-        numeric_cols = ["GGR CAGR", "Operator_tax", "Player_tax", "Accounts_#", "Tax (iGaming)"]
+        numeric_cols = ["GGR CAGR", "Operator_tax", "Player_tax", "Accounts_#"]
         for col in numeric_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -177,10 +164,6 @@ df = load_data()
 
 # Sidebar filters
 st.sidebar.header("Filters")
-
-# Show column names for debugging
-# Commented out to prevent logging columns in the app
-# st.sidebar.expander("Debug Information").write(df.columns.tolist())
 
 # Market region filter - with safety check
 if 'Market_region' in df.columns and not df['Market_region'].isna().all():
@@ -228,14 +211,6 @@ with tab1:
         if "clickData" not in st.session_state:
             st.session_state.clickData = None
         
-        # Function to handle country clicks
-        def handle_country_click(trace, points, state):
-            if points.point_inds:
-                point_index = points.point_inds[0]
-                country = filtered_df.iloc[point_index]['Country_region']
-                st.session_state.selected_country = country
-                st.experimental_rerun()
-        
         # Color coding for regulation status
         if 'Regulated' in filtered_df.columns:
             # Create color map based on unique values
@@ -271,8 +246,6 @@ with tab1:
                     margin={"r": 0, "t": 30, "l": 0, "b": 0},
                 )
                 
-                # Make the map clickable - removed update_traces as it's not compatible with Choropleth
-                
                 # Display map
                 map_chart = st.plotly_chart(fig, use_container_width=True)
                 
@@ -283,26 +256,6 @@ with tab1:
                     st.session_state.selected_country = country
             else:
                 st.warning("No regulation status data available")
-        elif 'Legality/Regulation' in filtered_df.columns:
-            # Alternative coloring by Legality/Regulation
-            fig = px.choropleth(
-                filtered_df,
-                locations="Country_region",
-                locationmode="country names",
-                color="Legality/Regulation",
-                hover_name="Country_region",
-                hover_data=[col for col in ["Market_region", "Regulation_type", "Offshore?", "Casino", "iGaming", "Betting", "iBetting"] if col in filtered_df.columns],
-                color_discrete_sequence=px.colors.qualitative.Safe,
-                title="iGaming Regulation Status by Country (Click on a country for details)"
-            )
-            
-            fig.update_layout(
-                height=600,
-                margin={"r": 0, "t": 30, "l": 0, "b": 0},
-            )
-            
-            # Display map with click handling
-            st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning("No regulation status column found in the dataset")
         
@@ -352,8 +305,6 @@ with tab2:
         tax_options.append("Operator_tax")
     if "Player_tax" in df.columns:
         tax_options.append("Player_tax")
-    if "Tax (iGaming)" in df.columns:
-        tax_options.append("Tax (iGaming)")
     
     if tax_options:
         tax_type = st.radio("Select Tax Type:", tax_options, 
@@ -414,29 +365,6 @@ with tab2:
 with tab3:
     st.header("Responsible Gambling Measures by Country")
     
-    # Check if the responsible gambling columns exist
-    rg_columns = [col for col in df.columns if col in ['Responsible Gambling (iGaming)', 'Stake_limit', 'Deposit_limit', 'Withdrawal_limit']]
-    
-    if 'Responsible Gambling (iGaming)' in rg_columns:
-        # If there's a general RG score column
-        fig_rg = px.choropleth(
-            filtered_df,
-            locations="Country_region",
-            locationmode="country names",
-            color="Responsible Gambling (iGaming)",
-            hover_name="Country_region",
-            hover_data=["Market_region", "Regulated"],
-            color_continuous_scale=px.colors.sequential.Greens,
-            title="Responsible Gambling Score by Country"
-        )
-        
-        fig_rg.update_layout(
-            height=600,
-            margin={"r": 0, "t": 30, "l": 0, "b": 0}
-        )
-        
-        st.plotly_chart(fig_rg, use_container_width=True)
-    
     # Specific Responsible Gambling measures
     rg_measures = [col for col in ['Stake_limit', 'Deposit_limit', 'Withdrawal_limit'] if col in df.columns]
     
@@ -462,16 +390,13 @@ with tab3:
         )
         
         st.plotly_chart(fig_measure, use_container_width=True)
-    
-    # If no responsible gambling data is available
-    if not rg_columns:
-        st.info("No responsible gambling data available in the dataset.")
         
-    # Table of RG measures
-    if rg_measures:
+        # Table of RG measures
         st.subheader("Responsible Gambling Measures by Country")
         rg_data = filtered_df[['Country_region', 'Market_region'] + rg_measures]
         st.dataframe(rg_data, use_container_width=True)
+    else:
+        st.info("No responsible gambling measure columns found in the dataset.")
 
 # Table view
 with tab4:
@@ -487,7 +412,7 @@ with tab4:
     # Column selector
     available_columns = list(display_df.columns)
     
-    # Define desired default columns
+    # Define desired default columns based on known columns
     desired_defaults = ["Country_region", "Market_region", "Regulated", "Regulation_type", "Operator_tax", "Player_tax"]
     
     # Filter to only include columns that actually exist in the DataFrame
@@ -591,10 +516,6 @@ if st.session_state.selected_country:
                     # Regulation type
                     if 'Regulation_type' in country_data.columns and pd.notna(country_data['Regulation_type'].iloc[0]):
                         st.write(f"**Regulation Type:** {country_data['Regulation_type'].iloc[0]}")
-                    
-                    # Legality/Regulation
-                    if 'Legality/Regulation' in country_data.columns and pd.notna(country_data['Legality/Regulation'].iloc[0]):
-                        st.write(f"**Legality/Regulation:** {country_data['Legality/Regulation'].iloc[0]}")
                 
                 with col2:
                     # Offshore & Residents info with icons
@@ -657,7 +578,7 @@ if st.session_state.selected_country:
                     # Tax information in metrics
                     st.subheader("Tax Rates")
                     
-                    tax_cols = [col for col in ['Operator_tax', 'Player_tax', 'Tax (iGaming)'] if col in country_data.columns]
+                    tax_cols = [col for col in ['Operator_tax', 'Player_tax'] if col in country_data.columns]
                     if tax_cols:
                         for tax_col in tax_cols:
                             if pd.notna(country_data[tax_col].iloc[0]):
@@ -686,7 +607,7 @@ if st.session_state.selected_country:
                     # Create a bar chart comparing with regional average if tax data exists
                     st.subheader("Regional Comparison")
                     
-                    tax_columns = [col for col in ['Operator_tax', 'Player_tax', 'Tax (iGaming)'] 
+                    tax_columns = [col for col in ['Operator_tax', 'Player_tax'] 
                                 if col in country_data.columns and pd.notna(country_data[col].iloc[0])]
                     
                     if tax_columns and 'Market_region' in country_data.columns:
@@ -731,17 +652,6 @@ if st.session_state.selected_country:
             # Responsible Gambling tab
             with info_tab3:
                 st.subheader("Responsible Gambling Measures")
-                
-                # RG Score if available
-                if 'Responsible Gambling (iGaming)' in country_data.columns and pd.notna(country_data['Responsible Gambling (iGaming)'].iloc[0]):
-                    score = country_data['Responsible Gambling (iGaming)'].iloc[0]
-                    try:
-                        score_float = float(score)
-                        # Create a progress bar for the score
-                        st.write(f"**RG Score:** {score_float}/10")
-                        st.progress(min(score_float/10, 1.0))
-                    except (ValueError, TypeError):
-                        st.write(f"**RG Score:** {score}")
                 
                 # RG measures in a nice format
                 col1, col2 = st.columns(2)
