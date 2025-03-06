@@ -486,11 +486,29 @@ with tab4:
         
     # Column selector
     available_columns = list(display_df.columns)
-    selected_columns = st.multiselect(
-        "Select columns to display",
-        available_columns,
-        default=["Country_region", "Market_region", "Regulated", "Regulation_type", "Operator_tax", "Player_tax"]
-    ) or available_columns  # If nothing selected, show all columns
+    
+    # Define desired default columns
+    desired_defaults = ["Country_region", "Market_region", "Regulated", "Regulation_type", "Operator_tax", "Player_tax"]
+    
+    # Filter to only include columns that actually exist in the DataFrame
+    default_columns = [col for col in desired_defaults if col in available_columns]
+    
+    # If no default columns exist, don't specify any defaults
+    if default_columns:
+        selected_columns = st.multiselect(
+            "Select columns to display",
+            available_columns,
+            default=default_columns
+        )
+    else:
+        selected_columns = st.multiselect(
+            "Select columns to display",
+            available_columns
+        )
+    
+    # If nothing selected, show all columns
+    if not selected_columns:
+        selected_columns = available_columns
     
     # Display table
     st.dataframe(display_df[selected_columns], use_container_width=True)
