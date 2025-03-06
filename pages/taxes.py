@@ -16,7 +16,7 @@ st.markdown("Interactive map of global iGaming regulations and tax data. Click o
 @st.cache_data(ttl=600)  # Cache data for 10 minutes
 def load_data():
     try:
-        # Method 1: Using secrets.toml for authentication
+        # Using secrets.toml for authentication
         # Create credentials from secrets
         credentials = service_account.Credentials.from_service_account_info(
             st.secrets["gcp_service_account"],
@@ -28,55 +28,20 @@ def load_data():
         
         # Connect to the spreadsheet
         gc = gspread.authorize(credentials)
-        sheet = gc.open_by_key('1SihEq-fymsko-2vr1NTaNG6NNTC_gBf9OMnI2pUmFEo')
-        worksheet = sheet.worksheet("Tax")  # Change this to your actual sheet name
+        sheet = gc.open("Research - Summary")  # Open by exact name
+        worksheet = sheet.worksheet("Tax")  # Use the Tax worksheet
         
         # Get all data and convert to DataFrame
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
         
-        # If the above method fails, try direct URL as fallback
-        if df.empty:
-            url = "https://docs.google.com/spreadsheets/d/1SihEq-fymsko-2vr1NTaNG6NNTC_gBf9OMnI2pUmFEo/export?format=csv&gid=978503341"
-            df = pd.read_csv(url)
-        
         return df
     
     except Exception as e:
         st.error(f"Error loading data: {e}")
-        
-        # If both methods fail, use sample data for demonstration
-        st.warning("Using sample data for demonstration. Please check your Google Sheet permissions.")
-        # Create sample data with common iGaming regulation & tax data fields
-        sample_data = {
-            'Country_region': ['United States', 'Canada', 'United Kingdom', 'Germany', 'France', 
-                      'Japan', 'Australia', 'China', 'Brazil', 'India'],
-            'Market_region': ['North America', 'North America', 'Europe', 'Europe', 'Europe', 
-                      'Asia', 'Oceania', 'Asia', 'South America', 'Asia'],
-            'GGR CAGR': [15.2, 12.1, 8.5, 7.2, 6.8, 5.3, 10.2, 3.5, 18.7, 22.4],
-            'Regulated': ['Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'No', 'Yes', 'No', 'Partially', 'No'],
-            'Regulation_type': ['State-level', 'Provincial', 'National', 'National', 'National', 
-                         'Prohibited', 'National', 'Prohibited', 'Transition', 'Limited'],
-            'Offshore?': ['Yes', 'Yes', 'No', 'No', 'No', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes'],
-            'Residents?': ['Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'No', 'Yes', 'No', 'Yes', 'Restricted'],
-            'Casino': ['Regulated', 'Regulated', 'Regulated', 'Regulated', 'Regulated', 
-                    'Prohibited', 'Regulated', 'Prohibited', 'Partially', 'Prohibited'],
-            'iGaming': ['Regulated', 'Regulated', 'Regulated', 'Regulated', 'Regulated', 
-                     'Prohibited', 'Regulated', 'Prohibited', 'Partially', 'Prohibited'],
-            'Betting': ['Regulated', 'Regulated', 'Regulated', 'Regulated', 'Regulated', 
-                     'Limited', 'Regulated', 'State-Run', 'Regulated', 'Limited'],
-            'iBetting': ['Regulated', 'Regulated', 'Regulated', 'Regulated', 'Regulated', 
-                      'Limited', 'Regulated', 'State-Run', 'Regulated', 'Limited'],
-            'Operator_tax': [25.0, 20.0, 15.0, 5.3, 13.2, 0.0, 10.0, 20.0, 18.0, 30.0],
-            'Player_tax': [0.0, 0.0, 0.0, 5.0, 12.0, 15.0, 0.0, 20.0, 0.0, 30.0],
-            'Accounts_#': [1500000, 890000, 3200000, 2100000, 1800000, 
-                         120000, 950000, 0, 1200000, 350000],
-            'Tax (iGaming)': [25.0, 20.0, 15.0, 5.3, 13.2, 0.0, 10.0, 20.0, 18.0, 30.0],
-            'Legality/Regulation': ['Legal/Regulated', 'Legal/Regulated', 'Legal/Regulated', 
-                                  'Legal/Regulated', 'Legal/Regulated', 'Illegal', 
-                                  'Legal/Regulated', 'Illegal', 'Legal/Partially Regulated', 'Restricted']
-        }
-        return pd.DataFrame(sample_data)
+        st.error("Please check your Google Sheet permissions and ensure the 'Research - Summary' sheet with 'Tax' worksheet exists.")
+        # Raise the exception to see detailed error message during development
+        raise e
 
 # Load data
 df = load_data()
@@ -363,4 +328,4 @@ with tab3:
 
 # Footer
 st.markdown("---")
-st.markdown("Data source: [Google Sheets](https://docs.google.com/spreadsheets/d/1SihEq-fymsko-2vr1NTaNG6NNTC_gBf9OMnI2pUmFEo/edit)")
+st.markdown("Data source: Research - Summary (Tax worksheet)")
