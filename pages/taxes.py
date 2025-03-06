@@ -5,10 +5,16 @@ from google.oauth2.service_account import Credentials
 import folium
 from streamlit_folium import folium_static
 
-# Load secrets
-tax_spreadsheet_id = st.secrets["spreadsheet"]["spreadsheet_id"]
-jackpot_spreadsheet_id = st.secrets["jackpot_spreadsheet"]["spreadsheet_id"]
-credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
+# URLs of the Google Sheets
+tax_spreadsheet_url = "https://docs.google.com/spreadsheets/d/1SihEq-fymsko-2vr1NTaNG6NNTC_gBf9OMnI2pUmFEo/edit?gid=978503341#gid=978503341"
+jackpot_spreadsheet_url = "https://docs.google.com/spreadsheets/d/1-4Rrf2YEzrypR97C-YSsORAsKuzrqPAYIG6HclZuDFY/edit?gid=143706601#gid=143706601"
+
+# Extract the spreadsheet ID from the URL
+tax_spreadsheet_id = tax_spreadsheet_url.split("/d/")[1].split("/")[0]
+jackpot_spreadsheet_id = jackpot_spreadsheet_url.split("/d/")[1].split("/")[0]
+
+# Use your existing credentials (assuming they are set securely)
+credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"])  # Assuming credentials are stored securely
 client = gspread.authorize(credentials)
 
 # Load Tax Data
