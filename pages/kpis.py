@@ -717,7 +717,7 @@ def main():
                     
                     if chart_type == "Static (Matplotlib)":
                         # Create a static matplotlib chart
-                        fig, ax = plt.subplots(figsize=(8, 6))
+                        fig, ax = plt.subplots(figsize=(8, 4))
                         
                         # Get the filtered data
                         filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
