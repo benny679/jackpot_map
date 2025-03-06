@@ -507,7 +507,7 @@ if "selected_country" not in st.session_state:
     # Check URL parameters first
     params = st.query_params
     if "country" in params:
-        st.session_state.selected_country = params["country"][0]
+        st.session_state.selected_country = params["country"]
     else:
         st.session_state.selected_country = None
 
