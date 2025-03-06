@@ -146,6 +146,11 @@ def load_data():
         # Apply mapping if needed
         if column_mapping:
             df = df.rename(columns=column_mapping)
+        
+        # Log the columns we found
+        # Commented out to prevent logging columns in the app
+        # st.write("Found columns:", df.columns.tolist())
+        
         # Convert numeric columns
         numeric_cols = ["GGR CAGR", "Operator_tax", "Player_tax", "Accounts_#", "Tax (iGaming)"]
         for col in numeric_cols:
@@ -174,7 +179,8 @@ df = load_data()
 st.sidebar.header("Filters")
 
 # Show column names for debugging
-st.sidebar.expander("Debug Information").write(df.columns.tolist())
+# Commented out to prevent logging columns in the app
+# st.sidebar.expander("Debug Information").write(df.columns.tolist())
 
 # Market region filter - with safety check
 if 'Market_region' in df.columns and not df['Market_region'].isna().all():
@@ -265,12 +271,7 @@ with tab1:
                     margin={"r": 0, "t": 30, "l": 0, "b": 0},
                 )
                 
-                # Make the map clickable
-                fig.update_traces(
-                    hoverinfo="text+name",
-                    mode="markers",
-                    marker=dict(line=dict(width=2, color='white')),
-                )
+                # Make the map clickable - removed update_traces as it's not compatible with Choropleth
                 
                 # Display map
                 map_chart = st.plotly_chart(fig, use_container_width=True)
