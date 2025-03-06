@@ -419,7 +419,7 @@ def create_interactive_ev_added_chart(df, start_date=None, end_date=None):
     chart = alt.layer(area, line, points).properties(
         title=alt.TitleParams(
             text='EV Added Over Time',
-            fontSize=16
+            fontSize=8
         ),
         height=400,
         width='container'
