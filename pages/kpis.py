@@ -233,7 +233,7 @@ def create_static_ev_added_chart(df, start_date=None, end_date=None, date_format
         label='EV Added',
         color="#000000",
         marker='o',
-        markersize=5,
+        markersize=2,
         alpha=0.8
     )
     
