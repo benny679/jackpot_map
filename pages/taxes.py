@@ -5,51 +5,86 @@ import gspread
 from google.oauth2 import service_account
 import re
 
-# Function to connect to jackpot data
+# Function to connect to jackpot data - CORRECTED sheet and worksheet names
 def connect_to_jackpots(country=None):
     """
     Function to connect to jackpot data and get jackpots for a specific country.
-    Uses the same data source as the Jackpot Map dashboard.
+    Specifically searches for the country in Column C of the Jackpot Map worksheet.
     
     Args:
         country (str, optional): Country to filter jackpots for. Defaults to None.
         
     Returns:
-        pd.DataFrame: DataFrame containing jackpot data
+        pd.DataFrame: DataFrame containing jackpot data with unique Jackpot Groups
     """
     try:
-        # Use the same data loading function as in your dashboard
-        from utils.data_loader import load_sheet_data
+        # Access the Google Sheet directly using the same credentials as the main app
+        credentials = service_account.Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"],
+            scopes=[
+                "https://spreadsheets.google.com/feeds",
+                "https://www.googleapis.com/auth/drive",
+            ],
+        )
         
-        # Load the jackpot data
-        jackpot_df = load_sheet_data()
+        # Connect to the spreadsheet - CORRECTED: Sheet is named "Low Vol JPS"
+        gc = gspread.authorize(credentials)
+        sheet = gc.open("Low Vol JPS")
         
-        # Map country to appropriate region if needed
-        country_to_region = {
-            # Add your country to region mappings here
-            "United Kingdom": "UK & Ireland",
-            "Ireland": "UK & Ireland",
-            "Germany": "Europe",
-            "France": "Europe",
-            "Spain": "Europe",
-            "Italy": "Europe",
-            "United States": "North America",
-            "Canada": "North America",
-            # Add more mappings as needed
-        }
+        # Specifically target the "Jackpot Map" worksheet - CORRECTED: Worksheet is named "Jackpot Map"
+        worksheet = sheet.worksheet("Jackpot Map")
         
-        # Filter by country/region if specified
+        # Get all data
+        all_values = worksheet.get_all_values()
+        
+        # Get headers (first row)
+        headers = all_values[0]
+        
+        # Convert to DataFrame
+        jackpot_df = pd.DataFrame(all_values[1:], columns=headers)
+        
+        # Column C is typically the 3rd column (index 2)
+        country_column = headers[2] if len(headers) > 2 else "Country"
+        
+        # If a country is specified, filter for it in column C
         if country and not jackpot_df.empty:
-            # Try direct country match first (if your data has a Country column)
-            if "Country" in jackpot_df.columns:
-                filtered_jackpots = jackpot_df[jackpot_df["Country"] == country]
-            # If no direct match or no Country column, try matching by Region
-            elif "Region" in jackpot_df.columns and country in country_to_region:
-                region = country_to_region.get(country, country)
-                filtered_jackpots = jackpot_df[jackpot_df["Region"] == region]
-            else:
-                # If no match possible, return empty DataFrame
-                filtered_jackpots = pd.DataFrame()
+            # Filter for rows where Column C (index 2) matches the country
+            filtered_jackpots = jackpot_df[jackpot_df[country_column] == country]
+            
+            # If no direct match, try with country mappings
+            if filtered_jackpots.empty:
+                country_to_region = {
+                    "United Kingdom": "UK",
+                    "Great Britain": "UK",
+                    "UK": "UK & Ireland",
+                    "Ireland": "UK & Ireland",
+                    "Germany": "Germany",
+                    "France": "France",
+                    "Spain": "Spain",
+                    "Italy": "Italy",
+                    "United States": "US",
+                    "USA": "US",
+                    "US": "North America",
+                    "Canada": "Canada",
+                    # Add more mappings as needed
+                }
+                
+                # Try alternative names for the country
+                for alt_name, region in country_to_region.items():
+                    if alt_name.lower() in country.lower() or country.lower() in alt_name.lower():
+                        filtered_jackpots = jackpot_df[jackpot_df[country_column] == alt_name]
+                        if not filtered_jackpots.empty:
+                            break
+                        
+                        filtered_jackpots = jackpot_df[jackpot_df[country_column] == region]
+                        if not filtered_jackpots.empty:
+                            break
+            
+            # Get unique Jackpot Groups
+            if "Jackpot Group" in filtered_jackpots.columns:
+                # Get one row per unique Jackpot Group
+                unique_groups = filtered_jackpots.drop_duplicates(subset=["Jackpot Group"])
+                return unique_groups
             
             return filtered_jackpots
         
@@ -57,8 +92,10 @@ def connect_to_jackpots(country=None):
     
     except Exception as e:
         st.error(f"Error connecting to jackpot data: {e}")
+        # Print detailed error for debugging
+        import traceback
+        st.error(traceback.format_exc())
         return pd.DataFrame()  # Return empty DataFrame on error
-
 # Function to load data from Google Sheet
 @st.cache_data(ttl=600)  # Cache data for 10 minutes
 def load_data():
@@ -688,46 +725,67 @@ if st.session_state.selected_country:
                         else:
                             st.write("**Priority Region:** ❌")
             
-            # Jackpots tab - connection to Jackpot Map
+                       # Jackpots tab - corrected for proper sheet and worksheet names
             with info_tab4:
                 st.subheader(f"Available Jackpots in {st.session_state.selected_country}")
                 
-                # Connect to jackpot data
+                # Connect to jackpot data - search Column C in the Jackpot Map worksheet of the Low Vol JPS sheet
                 jackpot_data = connect_to_jackpots(st.session_state.selected_country)
                 
                 if not jackpot_data.empty:
                     # Display jackpot count
-                    st.success(f"Found {len(jackpot_data)} jackpots available in {st.session_state.selected_country}")
+                    total_jackpots = len(jackpot_data)
+                    unique_groups = jackpot_data["Jackpot Group"].nunique() if "Jackpot Group" in jackpot_data.columns else 0
+                    
+                    st.success(f"Found {unique_groups} unique Jackpot Groups available in {st.session_state.selected_country}")
                     
                     # Create columns for metrics
-                    try:
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Total Jackpots", len(jackpot_data))
-                        
-                        with col2:
-                            if "Provider" in jackpot_data.columns:
-                                unique_providers = jackpot_data["Provider"].nunique()
-                                st.metric("Unique Providers", unique_providers)
-                        
-                        with col3:
-                            if "Jackpot Group" in jackpot_data.columns:
-                                unique_groups = jackpot_data["Jackpot Group"].nunique()
-                                st.metric("Jackpot Groups", unique_groups)
-                    except Exception as e:
-                        st.warning(f"Error calculating jackpot metrics: {e}")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Unique Jackpot Groups", unique_groups)
                     
-                    # Display the jackpot data table
-                    display_columns = ["Game Name", "Provider", "Jackpot Group", "Type", "Operator"]
-                    display_columns = [col for col in display_columns if col in jackpot_data.columns]
+                    with col2:
+                        if "Provider" in jackpot_data.columns:
+                            unique_providers = jackpot_data["Provider"].nunique()
+                            st.metric("Unique Providers", unique_providers)
                     
-                    if display_columns:
+                    with col3:
+                        st.metric("Total Jackpot Entries", total_jackpots)
+                    
+                    # Focus on displaying Jackpot Groups
+                    if "Jackpot Group" in jackpot_data.columns:
+                        # Create section for Jackpot Groups
+                        st.subheader("Jackpot Groups")
+                        
+                        # Determine columns to display
+                        display_columns = []
+                        
+                        # Check for important jackpot columns and add them if they exist
+                        for col in ["Jackpot Group", "Provider", "Game Name", "Type", "Operator"]:
+                            if col in jackpot_data.columns:
+                                display_columns.append(col)
+                        
+                        # Display the unique jackpot group data
                         st.dataframe(jackpot_data[display_columns], use_container_width=True)
+                        
+                        # Create a pie chart of Jackpot Groups
+                        if len(jackpot_data["Jackpot Group"].unique()) > 1:
+                            group_counts = jackpot_data["Jackpot Group"].value_counts().reset_index()
+                            group_counts.columns = ["Jackpot Group", "Count"]
+                            
+                            fig = px.pie(
+                                group_counts,
+                                values="Count",
+                                names="Jackpot Group",
+                                title=f"Jackpot Group Distribution in {st.session_state.selected_country}"
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
                     else:
+                        # Fallback if Jackpot Group column isn't available
                         st.dataframe(jackpot_data, use_container_width=True)
                         
                     # Provide a link to the full Jackpot Map dashboard
-                    if st.button(f"Analyze All Jackpots for {st.session_state.selected_country} in Jackpot Map"):
+                    if st.button(f"View All Jackpots for {st.session_state.selected_country} in Jackpot Map"):
                         # Set session state variables to be used in the Jackpot Map
                         st.session_state["jackpot_filter_country"] = st.session_state.selected_country
                         
@@ -739,24 +797,24 @@ if st.session_state.selected_country:
                         }
                         
                         # Navigate to Jackpot Map page
-                        st.set_query_params(**params)
+                        st.experimental_set_query_params(**params)
                 else:
                     st.info(f"No jackpot data available for {st.session_state.selected_country}.")
-                    st.warning("This could be because the country doesn't have jackpots available, or the country name doesn't match the regions in your jackpot data.")
+                    st.warning("No jackpots found in Column C of the Jackpot Map worksheet for this country.")
                     
                     # Help text to explain how to address this
                     with st.expander("How to fix this"):
                         st.markdown("""
                         To fix this, you can:
                         
-                        1. Check if your country name matches a region in your jackpot data
+                        1. Check if your country name matches exactly what's in Column C of the Jackpot Map worksheet
                         2. Update the country-to-region mapping in the `connect_to_jackpots` function
-                        3. Make sure your jackpot data is properly loaded from Google Sheets
+                        3. Make sure the "Low Vol JPS" Google Sheet and "Jackpot Map" worksheet are accessible
                         """)
                     
                     # Still provide a link to the jackpot map
                     if st.button("Go to Jackpot Map Dashboard"):
-                        st.set_query_params(page="jackpot_map")
+                        st.experimental_set_query_params(page="jackpot_map")
     else:
         st.warning(f"No data available for {st.session_state.selected_country}")
 else:
