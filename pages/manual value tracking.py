@@ -124,7 +124,7 @@ def create_level_plot(df, casino, game, region, start_date, end_date):
     # Handle single subplot case
     if num_levels == 1:
         axs = np.array([[axs]])
-    elif rows == 1:
+    elif rows == 1 and cols > 1:
         axs = axs.reshape(1, -1)
     
     # Plot each level
@@ -134,18 +134,22 @@ def create_level_plot(df, casino, game, region, start_date, end_date):
         # Set datetime as index for proper time-series plotting
         plot_df = filtered_df.set_index("DateTime").copy()
         
-        axs[row, col].plot(plot_df.index, plot_df[level], marker='o', linestyle='-', label=level)
-        axs[row, col].set_title(f"{casino} - {game} - {level}")
-        axs[row, col].set_xlabel("Date")
-        axs[row, col].set_ylabel("Value")
-        axs[row, col].tick_params(axis='x', rotation=45)
-        axs[row, col].legend()
-        axs[row, col].grid(True)
+        # Handle case where axs is a single subplot
+        ax = axs[row, col] if num_levels > 1 or (rows == 1 and cols > 1) else axs
+        
+        ax.plot(plot_df.index, plot_df[level], marker='o', linestyle='-', label=level)
+        ax.set_title(f"{casino} - {game} - {level}")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Value")
+        ax.tick_params(axis='x', rotation=45)
+        ax.legend()
+        ax.grid(True)
     
     # Hide any unused subplots
-    if num_levels % cols != 0 and num_levels > 1:
+    if num_levels > 1 and num_levels % cols != 0:
         for j in range(num_levels % cols, cols):
-            fig.delaxes(axs[rows-1, j])
+            if rows > 1 or cols > 1:  # Only if we have multiple subplots
+                fig.delaxes(axs[rows-1, j])
     
     plt.tight_layout()
     return fig
@@ -228,11 +232,34 @@ def main():
         start_datetime = pd.to_datetime(start_date)
         end_datetime = pd.to_datetime(end_date) + timedelta(days=1) - timedelta(seconds=1)  # End of day
         
+        # Use session state to store the plot
+        if 'plot_generated' not in st.session_state:
+            st.session_state.plot_generated = False
+            st.session_state.current_plot = None
+            st.session_state.plot_settings = {
+                'casino': None,
+                'game': None,
+                'region': None,
+                'start_date': None,
+                'end_date': None
+            }
+        
         # Display the plot
-        if st.button("Generate Plot"):
-            st.subheader(f"Level Values for {selected_casino} - {selected_game} - {selected_region}")
+        generate_plot = st.button("Generate Plot")
+        
+        # Check if we should generate a new plot or use stored one
+        if generate_plot:
+            # Store current settings
+            st.session_state.plot_settings = {
+                'casino': selected_casino,
+                'game': selected_game,
+                'region': selected_region,
+                'start_date': start_datetime,
+                'end_date': end_datetime
+            }
             
-            plot = create_level_plot(
+            # Generate and store the plot
+            st.session_state.current_plot = create_level_plot(
                 df, 
                 selected_casino, 
                 selected_game, 
@@ -240,9 +267,12 @@ def main():
                 start_datetime, 
                 end_datetime
             )
-            
-            if plot:
-                st.pyplot(plot)
+            st.session_state.plot_generated = True
+        
+        # Display plot if available
+        if st.session_state.plot_generated and st.session_state.current_plot:
+            st.subheader(f"Level Values for {st.session_state.plot_settings['casino']} - {st.session_state.plot_settings['game']} - {st.session_state.plot_settings['region']}")
+            st.pyplot(st.session_state.current_plot)
                 
                 # Option to upload to Slack
                 st.subheader("Share Plot")
@@ -333,17 +363,28 @@ def main():
                     mime="image/png"
                 )
         
-        # Display raw data
+        # Display raw data based on session state if plot is generated, otherwise use current filters
         st.subheader("Raw Data")
         
-        # Filter data based on selections
-        filtered_df = df[
-            (df["Casino"] == selected_casino) &
-            (df["Game"] == selected_game) &
-            (df["Region"] == selected_region) &
-            (df["DateTime"] >= start_datetime) &
-            (df["DateTime"] <= end_datetime)
-        ].copy()
+        if st.session_state.plot_generated:
+            # Use stored settings from when plot was generated
+            settings = st.session_state.plot_settings
+            filtered_df = df[
+                (df["Casino"] == settings['casino']) &
+                (df["Game"] == settings['game']) &
+                (df["Region"] == settings['region']) &
+                (df["DateTime"] >= settings['start_date']) &
+                (df["DateTime"] <= settings['end_date'])
+            ].copy()
+        else:
+            # Use current filter settings
+            filtered_df = df[
+                (df["Casino"] == selected_casino) &
+                (df["Game"] == selected_game) &
+                (df["Region"] == selected_region) &
+                (df["DateTime"] >= start_datetime) &
+                (df["DateTime"] <= end_datetime)
+            ].copy()
         
         # Sort by datetime
         filtered_df = filtered_df.sort_values("DateTime", ascending=False)
