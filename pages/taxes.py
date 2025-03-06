@@ -817,7 +817,7 @@ if st.session_state.selected_country:
                     
                     # Still provide a link to the jackpot map
                     if st.button("Go to Jackpot Map Dashboard"):
-                        st.query_params.update({"page": "jackpot_map"})
+                        st.query_params.update({"page": "dashboard"})
     else:
         st.warning(f"No data available for {st.session_state.selected_country}")
 else:
