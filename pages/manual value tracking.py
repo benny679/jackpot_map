@@ -1,5 +1,5 @@
 # Date range selection
-st.sidebar.subheader("Date Range")import streamlit as st
+import streamlit as st
 import pandas as pd
 import numpy as np
 import gspread
@@ -14,7 +14,7 @@ import os
 from utils.auth import check_password, logout, initialize_session_state
 from utils.ip_manager import log_ip_activity
 from utils.data_loader import upload_to_slack
-
+st.sidebar.subheader("Date Range")
 # Set environment variables from secrets for the entire application 
 # (add this to fix the Slack upload functionality)
 if 'slack' in st.secrets:
