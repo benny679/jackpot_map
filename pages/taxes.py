@@ -304,8 +304,8 @@ if check_password():
     if st.session_state["user_role"] == "admin":
         st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
 
-   if st.session_state["user_role"] == "admin":
-        st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
+       if st.session_state["user_role"] == "admin":
+            st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
 
 # Title and description
 st.title("Global iGaming Regulation & Tax Dashboard")
