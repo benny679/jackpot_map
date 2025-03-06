@@ -1,14 +1,15 @@
 import streamlit as st
 import pandas as pd
+import json
+import os
+import time
+from datetime import datetime
 from utils.auth import check_password, logout, initialize_session_state
 from utils.ip_manager import log_ip_activity
-from utils.data_loader import load_sheet_data, upload_to_slack
-from datetime import datetime
-import os
 
 # Set page configuration
 st.set_page_config(
-    page_title="Dashboard - Jackpot Map",
+    page_title="Admin Panel - Jackpot Map",
     page_icon="🎮",
     layout="wide"
 )
@@ -18,144 +19,178 @@ initialize_session_state()
 
 # Check if the user is authenticated
 if check_password():
+    # Check if user has admin role
+    if st.session_state.get("user_role") != "admin":
+        st.error("You don't have permission to access this page.")
+        st.stop()
+    
     # Log the page view with IP
     if "username" in st.session_state and "ip_address" in st.session_state:
-        log_ip_activity(st.session_state["username"], "page_view_dashboard", st.session_state["ip_address"])
+        log_ip_activity(st.session_state["username"], "page_view_admin", st.session_state["ip_address"])
 
     # Display logout button in the sidebar
     st.sidebar.button("Logout", on_click=logout)
 
     # Display user information
     st.sidebar.info(f"Logged in as: {st.session_state['username']} ({st.session_state['user_role']})")
-
-    # Display IP address (only for admins)
-    if st.session_state["user_role"] == "admin":
-        st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
+    st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
 
     # Main app layout
-    st.title("🎮 Jackpot Map Dashboard")
+    st.title("Admin Panel")
+    st.write("Manage user activity, IP settings, and system logs.")
 
-    # Sidebar for filters
-    st.sidebar.title("Filters")
-    st.sidebar.markdown("Refine your view using these filters:")
+    # Create tabs for different admin functions
+    admin_tab1, admin_tab2, admin_tab3 = st.tabs(["User Activity", "IP Management", "System Logs"])
 
-    # Load data from Google Sheets
-    with st.spinner("Loading data from Google Sheets..."):
-        df = load_sheet_data()
+    with admin_tab1:
+        # Show recent login activity
+        st.subheader("User Login Activity")
+        
+        if os.path.exists("logs/login_activity.csv"):
+            login_activity = pd.read_csv("logs/login_activity.csv")
 
-    if df.empty:
-        st.warning("No data available. Please check your connection to Google Sheets.")
-        st.stop()
+            # Filter options
+            col1, col2 = st.columns(2)
+            with col1:
+                filter_status = st.selectbox("Filter by Status", ["All", "success", "failed"])
+            with col2:
+                filter_user = st.selectbox("Filter by User", ["All"] + list(set(login_activity["Username"].tolist())))
 
-    # Search filter at the top
-    st.sidebar.subheader("Quick Search")
-    search = st.sidebar.text_input("Search across all columns", "")
+            # Apply filters
+            filtered_activity = login_activity.copy()
+            if filter_status != "All":
+                filtered_activity = filtered_activity[filtered_activity["Status"] == filter_status]
+            if filter_user != "All":
+                filtered_activity = filtered_activity[filtered_activity["Username"] == filter_user]
 
-    # Advanced filtering
-    st.sidebar.subheader("Advanced Filters")
+            # Sort by most recent first
+            filtered_activity = filtered_activity.sort_values("Timestamp", ascending=False)
 
-    # Function to create filters with "All" option
-    def create_filter(df, column):
-        options = ["All"] + sorted(df[column].unique().tolist())
-        return st.sidebar.selectbox(f"Filter by {column}", options)
+            st.dataframe(filtered_activity, use_container_width=True)
+        else:
+            st.info("No login activity logs found.")
 
-    # Create filters for each column
-    filters = {}
-    filter_columns = ["Parent", "Operator", "Region", "License", "Accounts" ,"Game Name", "Provider", "Jackpot Group", "Type", "Dash ID"]
+    with admin_tab2:
+        st.subheader("IP Address Management")
 
-    for column in filter_columns:
-        if column in df.columns:
-            filters[column] = create_filter(df, column)
+        # Load IP configuration
+        try:
+            with open("ip_config.json", "r") as f:
+                ip_config = json.load(f)
+        except FileNotFoundError:
+            ip_config = {
+                "mode": "allow_all",
+                "allow_list": [],
+                "deny_list": []
+            }
 
-    # Apply filters
-    filtered_df = df.copy()
+        # IP configuration options
+        st.write("Configure IP access control settings")
 
-    # Apply search filter if provided
-    if search:
-        filtered_df = filtered_df[filtered_df.astype(str).apply(
-            lambda x: x.str.contains(search, case=False, na=False)).any(axis=1)]
+        # Select mode
+        mode = st.radio("IP Access Mode",
+                        ["Allow All (default)", "Deny All", "Use Allow/Deny Lists"],
+                        index=["allow_all", "deny_all", "use_lists"].index(ip_config.get("mode", "allow_all")))
 
-    # Apply column filters (only when not "All")
-    for column, value in filters.items():
-        if value != "All":
-            filtered_df = filtered_df[filtered_df[column] == value]
+        # Convert mode to internal representation
+        if mode == "Allow All (default)":
+            ip_config["mode"] = "allow_all"
+        elif mode == "Deny All":
+            ip_config["mode"] = "deny_all"
+        else:
+            ip_config["mode"] = "use_lists"
 
-    # Display metrics
-    st.subheader("Summary Metrics")
-    col1, col2, col3 = st.columns(3)
+        # Allow/Deny list management
+        if ip_config["mode"] == "use_lists":
+            col1, col2 = st.columns(2)
 
-    with col1:
-        st.metric("Total Records", f"{len(filtered_df)}")
+            with col1:
+                st.subheader("Allow List")
+                allow_list = st.text_area("IPs to Allow (one per line)",
+                                         "\n".join(ip_config.get("allow_list", [])))
+                ip_config["allow_list"] = [ip.strip() for ip in allow_list.split("\n") if ip.strip()]
 
-    with col2:
-        num_operators = filtered_df["Operator"].nunique() if "Operator" in filtered_df.columns else 0
-        st.metric("Unique Operators", f"{num_operators}")
+            with col2:
+                st.subheader("Deny List")
+                deny_list = st.text_area("IPs to Deny (one per line)",
+                                        "\n".join(ip_config.get("deny_list", [])))
+                ip_config["deny_list"] = [ip.strip() for ip in deny_list.split("\n") if ip.strip()]
 
-    with col3:
-        num_games = filtered_df["Game Name"].nunique() if "Game Name" in filtered_df.columns else 0
-        st.metric("Unique Games", f"{num_games}")
+            st.info("You can use individual IPs (e.g., 192.168.1.1) or CIDR notation (e.g., 192.168.1.0/24)")
 
-    # Display filtered data
-    st.subheader("Filtered Data")
-    st.dataframe(filtered_df, use_container_width=True)
+        # Save IP configuration
+        if st.button("Save IP Configuration"):
+            with open("ip_config.json", "w") as f:
+                json.dump(ip_config, f, indent=4)
+            st.success("IP configuration saved successfully!")
 
-    # Visualization section (only shown to certain roles)
-    if st.session_state["user_role"] in ["admin", "analyst"]:
-        st.subheader("Visualizations")
+        # Show IP activity logs
+        st.subheader("IP Activity Logs")
 
-        tab1, tab2 = st.tabs(["Distribution Analysis", "Detailed Counts"])
+        if os.path.exists("logs/ip_activity.csv"):
+            ip_activity = pd.read_csv("logs/ip_activity.csv")
 
-        with tab1:
-            # Distribution by region and operator
-            if "Region" in filtered_df.columns and "Operator" in filtered_df.columns:
-                region_operator_counts = filtered_df.groupby(["Region", "Operator"]).size().reset_index(name="Count")
-                st.bar_chart(region_operator_counts.pivot(index="Region", columns="Operator", values="Count"))
+            # Filter options
+            col1, col2 = st.columns(2)
+            with col1:
+                filter_activity = st.selectbox("Filter by Activity",
+                                             ["All"] + list(set(ip_activity["Activity"].tolist())))
+            with col2:
+                filter_ip = st.selectbox("Filter by IP",
+                                       ["All"] + list(set(ip_activity["IP Address"].tolist())))
 
-        with tab2:
-            # Detailed counts by different dimensions
-            if "Provider" in filtered_df.columns:
-                col1, col2 = st.columns(2)
+            # Apply filters
+            filtered_ip_activity = ip_activity.copy()
+            if filter_activity != "All":
+                filtered_ip_activity = filtered_ip_activity[filtered_ip_activity["Activity"] == filter_activity]
+            if filter_ip != "All":
+                filtered_ip_activity = filtered_ip_activity[filtered_ip_activity["IP Address"] == filter_ip]
 
-                with col1:
-                    provider_counts = filtered_df["Provider"].value_counts().reset_index()
-                    provider_counts.columns = ["Provider", "Count"]
-                    st.bar_chart(provider_counts.set_index("Provider"))
+            # Sort by most recent first
+            filtered_ip_activity = filtered_ip_activity.sort_values("Timestamp", ascending=False)
 
-                with col2:
-                    if "Jackpot Group" in filtered_df.columns:
-                        jackpot_counts = filtered_df["Jackpot Group"].value_counts().reset_index()
-                        jackpot_counts.columns = ["Jackpot Group", "Count"]
-                        st.bar_chart(jackpot_counts.set_index("Jackpot Group"))
+            st.dataframe(filtered_ip_activity, use_container_width=True)
+        else:
+            st.info("No IP activity logs found.")
 
-    # Export options (restricted by role)
-    st.subheader("Export Data")
-    col1, col2 = st.columns(2)
+    with admin_tab3:
+        st.subheader("System Logs")
 
-    with col1:
-        if st.button("Download Filtered Data as CSV"):
-            file_path = "jackpot_map_filtered.csv"
-            filtered_df.to_csv(file_path, index=False)
-            st.download_button(
-                label="Download CSV",
-                data=filtered_df.to_csv(index=False).encode('utf-8'),
-                file_name="jackpot_map_filtered.csv",
-                mime="text/csv"
-            )
+        # Show rate limiting information
+        st.write("Rate Limiting Status")
 
-    # Slack upload only for admin users
-    if st.session_state["user_role"] == "admin":
-        with col2:
-            slack_message = st.text_input("Slack Message (optional)", "Here's the latest jackpot map data:")
-            if st.button("Upload Filtered Data to Slack"):
-                if os.environ.get('SLACK_TOKEN'):
-                    file_path = "jackpot_map_filtered.csv"
-                    filtered_df.to_csv(file_path, index=False)
-                    upload_to_slack(file_path, slack_message)
-                else:
-                    st.warning("Slack token not set. Please set the SLACK_TOKEN environment variable.")
+        if os.path.exists("logs/rate_limits.json"):
+            with open("logs/rate_limits.json", "r") as f:
+                rate_limits = json.load(f)
 
-    # Footer with information
-    st.markdown("---")
-    st.markdown("Dashboard updates hourly from Google Sheets. Last update: " + pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"))
+            # Create a dataframe for display
+            rate_limit_data = []
+            current_time = time.time()
+
+            for key, data in rate_limits.items():
+                entry = {
+                    "Type": "User" if not key.startswith("ip_") else "IP",
+                    "Username/IP": key[3:] if key.startswith("ip_") else key,
+                    "Attempts": data.get("attempts", 0),
+                    "Status": "Locked" if current_time < data.get("reset_time", 0) else "Active",
+                    "Lockout Expires": datetime.fromtimestamp(data.get("reset_time", 0)).strftime("%Y-%m-%d %H:%M:%S")
+                                    if "reset_time" in data else "N/A"
+                }
+                rate_limit_data.append(entry)
+
+            if rate_limit_data:
+                rate_limit_df = pd.DataFrame(rate_limit_data)
+                st.dataframe(rate_limit_df, use_container_width=True)
+
+                # Button to clear rate limits
+                if st.button("Clear All Rate Limits"):
+                    with open("logs/rate_limits.json", "w") as f:
+                        json.dump({}, f)
+                    st.success("Rate limits cleared successfully!")
+                    st.experimental_rerun()
+            else:
+                st.info("No rate limits currently active.")
+        else:
+            st.info("No rate limiting data found.")
 else:
-    st.warning("Please log in to access the dashboard.")
+    st.warning("Please log in to access the admin panel.")
