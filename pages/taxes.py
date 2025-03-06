@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import gspread
 from google.oauth2 import service_account
+import streamlit as st
 
 # Add this at the beginning of your script, after the imports
 def connect_to_jackpots(country=None):
