@@ -268,4 +268,4 @@ def logout():
     st.session_state["username"] = None
     st.session_state["user_role"] = None
     st.session_state["ip_address"] = None
-    st.experimental_rerun()
+    st.rerun()
