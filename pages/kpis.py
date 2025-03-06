@@ -581,11 +581,49 @@ def main():
                 )
                 
                 if interactive_chart:
-                    # Display the interactive chart
-                    st.altair_chart(interactive_chart, use_container_width=True)
+                    # Add a toggle for chart type
+                    chart_type = st.radio(
+                        "Chart Type",
+                        ["Interactive (Altair)", "Static (Matplotlib)", "Simple (Streamlit)"],
+                        horizontal=True,
+                        key="kpi_chart_type"
+                    )
                     
-                    # Add information about interactivity features
-                    st.info("💡 **Interactive Features:** Click and drag to zoom, double-click to reset, hover for details, click legend items to show/hide metrics.")
+                    if chart_type == "Interactive (Altair)" and interactive_chart is not None:
+                        try:
+                            st.altair_chart(interactive_chart, use_container_width=True)
+                            
+                            # Add information about interactivity features
+                            st.info("💡 **Interactive Features:** Click and drag to zoom, double-click to reset, hover for details, click legend items to show/hide metrics.")
+                        except Exception as e:
+                            st.error(f"Error rendering Altair chart: {str(e)}")
+                            st.info("Falling back to Matplotlib chart...")
+                            chart_type = "Static (Matplotlib)"
+                    
+                    if chart_type == "Static (Matplotlib)":
+                        # Create a static matplotlib chart using the existing function
+                        static_chart = create_static_stacked_area_chart(
+                            df,
+                            columns=selected_kpis,
+                            start_date=start_date,
+                            end_date=end_date,
+                            date_format=date_format.replace("'", ""),
+                            date_interval=date_interval,
+                            y_limit=y_limit
+                        )
+                        
+                        if static_chart:
+                            st.pyplot(static_chart)
+                    
+                    elif chart_type == "Simple (Streamlit)":
+                        # Use Streamlit's built-in chart
+                        filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
+                        
+                        # Keep only selected KPIs
+                        existing_columns = [col for col in selected_kpis if col in filtered_df.columns]
+                        if existing_columns:
+                            filtered_df = filtered_df[['Week Commencing'] + existing_columns].set_index('Week Commencing')
+                            st.area_chart(filtered_df, use_container_width=True)
                     
                     # Option to upload to Slack (need to create static version for this)
                     col1, col2 = st.columns([3, 1])
@@ -653,8 +691,72 @@ def main():
                         st.write(f"Sum of EV Added: £{debug_df['EV Added'].sum():,.2f}")
                         st.write(f"Max EV Added: £{debug_df['EV Added'].max():,.2f}")
                     
-                    # Display the interactive chart
-                    st.altair_chart(interactive_ev_chart, use_container_width=True)
+                    # Add a toggle for chart type
+                    chart_type = st.radio(
+                        "Chart Type",
+                        ["Interactive (Altair)", "Static (Matplotlib)", "Simple (Streamlit)"],
+                        horizontal=True,
+                        key="ev_chart_type"
+                    )
+                    
+                    if chart_type == "Interactive (Altair)" and interactive_ev_chart is not None:
+                        try:
+                            st.altair_chart(interactive_ev_chart, use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Error rendering Altair chart: {str(e)}")
+                            st.info("Falling back to Matplotlib chart...")
+                            chart_type = "Static (Matplotlib)"
+                    
+                    if chart_type == "Static (Matplotlib)":
+                        # Create a static matplotlib chart
+                        fig, ax = plt.subplots(figsize=(10, 6))
+                        
+                        # Get the filtered data
+                        filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
+                        filtered_df = filtered_df[['Week Commencing', 'EV Added']].sort_values('Week Commencing')
+                        filtered_df['EV Added'] = pd.to_numeric(filtered_df['EV Added'], errors='coerce').fillna(0)
+                        
+                        # Plot the data
+                        ax.plot(
+                            filtered_df['Week Commencing'],
+                            filtered_df['EV Added'],
+                            marker='o',
+                            linestyle='-',
+                            color='black',
+                            linewidth=2,
+                            markersize=8
+                        )
+                        
+                        # Fill the area
+                        ax.fill_between(
+                            filtered_df['Week Commencing'],
+                            filtered_df['EV Added'],
+                            color='goldenrod',
+                            alpha=0.6
+                        )
+                        
+                        # Format the chart
+                        ax.set_title('EV Added Over Time', fontsize=16)
+                        ax.set_xlabel('Week Commencing', fontsize=12)
+                        ax.set_ylabel('EV Added (£)', fontsize=12)
+                        ax.grid(True, linestyle='--', alpha=0.7)
+                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b'))
+                        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, pos: f'£{x:,.0f}'))
+                        plt.xticks(rotation=45)
+                        plt.tight_layout()
+                        
+                        # Display the matplotlib chart
+                        st.pyplot(fig)
+                    
+                    elif chart_type == "Simple (Streamlit)":
+                        # Use Streamlit's built-in chart
+                        filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
+                        filtered_df = filtered_df[['Week Commencing', 'EV Added']].sort_values('Week Commencing')
+                        filtered_df['EV Added'] = pd.to_numeric(filtered_df['EV Added'], errors='coerce').fillna(0)
+                        filtered_df.set_index('Week Commencing', inplace=True)
+                        
+                        # Display with Streamlit's built-in chart
+                        st.line_chart(filtered_df['EV Added'], use_container_width=True)
                     
                     # Option to upload to Slack (need to create static version for this)
                     col1, col2 = st.columns([3, 1])
