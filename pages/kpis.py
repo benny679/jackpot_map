@@ -69,10 +69,15 @@ def load_kpi_data():
         # Convert EV Added to numeric, removing £ and , characters
         if 'EV Added' in df.columns:
             df['EV Added'] = df['EV Added'].replace('', np.nan)
-            # Check if the column contains string values before trying to replace characters
-            if df['EV Added'].dtype == 'object':
-                df['EV Added'] = df['EV Added'].str.replace('£', '').str.replace(',', '')
+            df['EV Added'] = df['EV Added'].astype(str)
+            # Remove currency symbols, commas and any other non-numeric characters except decimal point
+            df['EV Added'] = df['EV Added'].str.replace('£', '')
+            df['EV Added'] = df['EV Added'].str.replace(',', '')
+            df['EV Added'] = df['EV Added'].str.replace(' ', '')
+            # Convert to numeric, coercing errors to NaN
             df['EV Added'] = pd.to_numeric(df['EV Added'], errors='coerce')
+            # Replace NaN with 0 for charting purposes
+            df['EV Added'] = df['EV Added'].fillna(0)
 
         # Convert Week Commencing to datetime
         if 'Week Commencing' in df.columns:
@@ -361,20 +366,30 @@ def create_interactive_ev_added_chart(df, start_date=None, end_date=None):
         end_date = df['Week Commencing'].max()
     
     # Filter by date range
-    df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)]
+    filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
+    
+    # Check if we have any data to plot
+    if filtered_df.empty or filtered_df['EV Added'].sum() == 0:
+        st.warning("No EV Added data to display for the selected date range.")
+        return None
     
     # Prepare data for Altair
-    plot_data = df[['Week Commencing', 'EV Added']].copy()
+    plot_data = filtered_df[['Week Commencing', 'EV Added']].copy()
     
-    # Fill NaN values with 0
-    plot_data['EV Added'] = plot_data['EV Added'].fillna(0)
+    # Explicitly make sure values are numeric and replace NaN with 0
+    plot_data['EV Added'] = pd.to_numeric(plot_data['EV Added'], errors='coerce').fillna(0)
     
-    # Create Altair chart with area and line
-    area_chart = alt.Chart(plot_data).mark_area(
+    # Create a base chart
+    base = alt.Chart(plot_data).encode(
+        x=alt.X('Week Commencing:T', title='Week Commencing', 
+                axis=alt.Axis(format='%d %b %y', labelAngle=-45))
+    )
+    
+    # Create area chart
+    area = base.mark_area(
         color='goldenrod',
         opacity=0.6
     ).encode(
-        x=alt.X('Week Commencing:T', title='Week Commencing'),
         y=alt.Y('EV Added:Q', title='EV Added (£)', scale=alt.Scale(zero=True)),
         tooltip=[
             alt.Tooltip('Week Commencing:T', title='Date', format='%d %b %Y'),
@@ -382,34 +397,27 @@ def create_interactive_ev_added_chart(df, start_date=None, end_date=None):
         ]
     )
     
-    # Add line and points on top
-    line_chart = alt.Chart(plot_data).mark_line(
-        color='black'
-    ).encode(
-        x='Week Commencing:T',
+    # Add line 
+    line = base.mark_line(color='black', strokeWidth=2).encode(
         y='EV Added:Q'
     )
     
-    point_chart = alt.Chart(plot_data).mark_circle(
-        color='black',
-        size=60
-    ).encode(
-        x='Week Commencing:T',
+    # Add points
+    points = base.mark_circle(color='black', size=60).encode(
         y='EV Added:Q'
     )
     
-    # Combine charts
-    combined_chart = (area_chart + line_chart + point_chart).properties(
-        title='EV Added Over Time',
-        height=400
-    ).configure_axis(
-        labelFontSize=12,
-        titleFontSize=14
-    ).configure_title(
-        fontSize=16
+    # Combine charts and configure
+    chart = alt.layer(area, line, points).properties(
+        title=alt.TitleParams(
+            text='EV Added Over Time',
+            fontSize=16
+        ),
+        height=400,
+        width='container'
     ).interactive()
     
-    return combined_chart
+    return chart
 
 # Main app code
 def main():
@@ -631,6 +639,20 @@ def main():
                 )
                 
                 if interactive_ev_chart:
+                        # Debug information to show what's being plotted
+                    with st.expander("Debug EV Added Data", expanded=False):
+                        debug_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
+                        debug_df = debug_df[['Week Commencing', 'EV Added']].sort_values('Week Commencing')
+                        st.write("EV Added values being plotted:")
+                        st.dataframe(debug_df)
+                        
+                        # Show stats
+                        non_zero = (debug_df['EV Added'] > 0).sum()
+                        total = len(debug_df)
+                        st.write(f"Non-zero values: {non_zero} out of {total} rows")
+                        st.write(f"Sum of EV Added: £{debug_df['EV Added'].sum():,.2f}")
+                        st.write(f"Max EV Added: £{debug_df['EV Added'].max():,.2f}")
+                    
                     # Display the interactive chart
                     st.altair_chart(interactive_ev_chart, use_container_width=True)
                     
