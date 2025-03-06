@@ -1,832 +1,911 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import numpy as np
 import gspread
-from google.oauth2 import service_account
+from oauth2client.service_account import ServiceAccountCredentials
+import altair as alt
+from datetime import datetime, timedelta
+import io
+import os
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import matplotlib.ticker as ticker
+# Add this block near the beginning of your main file, after imports and before any functions
 
-# Function to connect to jackpot data
-def connect_to_jackpots(country=None):
-    """
-    Function to connect to jackpot data and get jackpots for a specific country.
-    Uses the same data source as the Jackpot Map dashboard.
-    
-    Args:
-        country (str, optional): Country to filter jackpots for. Defaults to None.
-        
-    Returns:
-        pd.DataFrame: DataFrame containing jackpot data
-    """
-    try:
-        # Use the same data loading function as in your dashboard
-        from utils.data_loader import load_sheet_data
-        
-        # Load the jackpot data
-        jackpot_df = load_sheet_data()
-        
-        # Map country to appropriate region if needed
-        country_to_region = {
-            # Add your country to region mappings here
-            "United Kingdom": "UK & Ireland",
-            "Ireland": "UK & Ireland",
-            "Germany": "Europe",
-            "France": "Europe",
-            "Spain": "Europe",
-            "Italy": "Europe",
-            "United States": "North America",
-            "Canada": "North America",
-            # Add more mappings as needed
-        }
-        
-        # Filter by country/region if specified
-        if country and not jackpot_df.empty:
-            # Try direct country match first (if your data has a Country column)
-            if "Country" in jackpot_df.columns:
-                filtered_jackpots = jackpot_df[jackpot_df["Country"] == country]
-            # If no direct match or no Country column, try matching by Region
-            elif "Region" in jackpot_df.columns and country in country_to_region:
-                region = country_to_region.get(country, country)
-                filtered_jackpots = jackpot_df[jackpot_df["Region"] == region]
-            else:
-                # If no match possible, return empty DataFrame
-                filtered_jackpots = pd.DataFrame()
-            
-            return filtered_jackpots
-        
-        return jackpot_df
-    
-    except Exception as e:
-        st.error(f"Error connecting to jackpot data: {e}")
-        return pd.DataFrame()  # Return empty DataFrame on error
+# Set environment variables from secrets for the entire application
+import os
+if 'slack' in st.secrets:
+    # Make Slack credentials available as environment variables
+    os.environ['SLACK_TOKEN'] = st.secrets.slack.slack_token
+    os.environ['SLACK_CHANNEL_ID'] = st.secrets.slack.channel_id
 
-# Function to load data from Google Sheet
-@st.cache_data(ttl=600)  # Cache data for 10 minutes
-def load_data():
+from utils.auth import check_password, logout, initialize_session_state
+from utils.ip_manager import log_ip_activity
+from utils.data_loader import upload_to_slack
+
+# Set page configuration
+st.set_page_config(
+    page_title="KPI Dashboard - Jackpot Map",
+    page_icon="📊",
+    layout="wide"
+)
+
+# Initialize session state variables
+initialize_session_state()
+
+# Formatting functions for charts (kept for the static chart exports)
+def format_currency(x, pos):
+    """Format numbers as currency."""
+    return f'£{x:,.0f}' if x >= 0 else f'-£{abs(x):,.0f}'
+
+def format_number(x, pos):
+    """Format numbers with thousand separators."""
+    return f'{x:,.0f}'
+
+# Function to load KPI data from Google Sheet
+@st.cache_data(ttl=3600)  # Cache data for 1 hour
+def load_kpi_data():
+    """Load KPI data from Google Sheets."""
     try:
-        # Using secrets.toml for authentication
-        # Create credentials from secrets
-        credentials = service_account.Credentials.from_service_account_info(
-            st.secrets["gcp_service_account"],
-            scopes=[
-                "https://spreadsheets.google.com/feeds",
-                "https://www.googleapis.com/auth/drive",
-            ],
-        )
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        credentials_dict = st.secrets["gcp_service_account"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+        client = gspread.authorize(creds)
         
-        # Connect to the spreadsheet
-        gc = gspread.authorize(credentials)
-        sheet = gc.open("Research - Summary")  # Open by exact name
-        worksheet = sheet.worksheet("Tax")  # Use the Tax worksheet
-        
-        st.info("Connected to Google Sheet. Processing data...")
-        
-        # Get all values
-        all_values = worksheet.get_all_values()
-        
-        if len(all_values) < 3:  # Need at least 2 header rows and 1 data row
-            st.error("Not enough rows in the sheet")
-            return pd.DataFrame()
-        
-        # Get the first two rows as headers
-        header_row1 = all_values[0]
-        header_row2 = all_values[1]
-        
-        # Combine the two rows to create complete headers
-        combined_headers = []
-        for i in range(len(header_row1)):
-            if i < len(header_row2):
-                # Combine non-empty values from both rows
-                header1 = header_row1[i].strip()
-                header2 = header_row2[i].strip()
-                
-                if header1 and header2:
-                    combined_headers.append(f"{header1} - {header2}")
-                elif header1:
-                    combined_headers.append(header1)
-                elif header2:
-                    combined_headers.append(header2)
-                else:
-                    combined_headers.append(f"Column_{i}")
-            else:
-                # Handle case where row2 is shorter than row1
-                combined_headers.append(header_row1[i].strip() or f"Column_{i}")
-        
-        # Check for empty or duplicate headers and fix them
-        cleaned_headers = []
-        seen = {}
-        
-        for i, header in enumerate(combined_headers):
-            if not header or header == "":
-                cleaned_headers.append(f"Column_{i}")
-            elif header in seen:
-                cleaned_headers.append(f"{header}_{seen[header]}")
-                seen[header] += 1
-            else:
-                cleaned_headers.append(header)
-                seen[header] = 1
-        
-        # Use data starting from row 3
-        data_rows = all_values[2:]
-        
-        # Create DataFrame
-        df = pd.DataFrame(data_rows, columns=cleaned_headers)
-        
-        # Find and rename key columns to standard names
-        column_mapping = {}
-        
-        # Look for Country_region column or equivalent
-        country_col = next((col for col in df.columns if "country" in col.lower() and "region" in col.lower()), None)
-        if country_col and country_col != "Country_region":
-            column_mapping[country_col] = "Country_region"
-            
-        # Look for Market_region column or equivalent
-        market_col = next((col for col in df.columns if "market" in col.lower() and "region" in col.lower()), None)
-        if market_col and market_col != "Market_region":
-            column_mapping[market_col] = "Market_region"
-        
-        # Apply mapping if needed
-        if column_mapping:
-            df = df.rename(columns=column_mapping)
-        
-        # Log the columns we found
-        st.write("Found columns:", df.columns.tolist())
-        
+        # Open the specific sheet
+        sheet = client.open("Low Vol JPS").worksheet("KPIs")
+        data = sheet.get_all_values()
+
+        # Convert to DataFrame
+        df = pd.DataFrame(data[2:], columns=data[1])  # Using row 1 as headers, data starts from row 2
+
+        # Clean up column names
+        df.columns = df.columns.str.strip()
+
         # Convert numeric columns
-        numeric_cols = ["GGR CAGR", "Operator_tax", "Player_tax", "Accounts_#", "Tax (iGaming)"]
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        
+        numeric_columns = [
+            'New Games Added', 'Scrapers added to backlog', 'N New Games Played', 'Scrapers Done',
+            'Scrapers in backlog', 'Av. days to model', 'Jackpots Played',
+            'Jackpots Won', 'Jackpots Missed', 'Reports Sent', 'KPIs recorded',
+            'Meetings Run', 'Total', 'Paused', 'Added this week'
+        ]
+
+        for col in numeric_columns:
+            if col in df.columns:  # Check if column exists
+                df[col] = pd.to_numeric(df[col].replace(['', '-'], np.nan), errors='coerce')
+        if 'EV Added' in df.columns:
+            # First replace empty values with NaN
+            df['EV Added'] = df['EV Added'].replace(['', '-'], np.nan)
+            
+            # For non-NaN values, convert to string and clean
+            mask = df['EV Added'].notna()
+            if mask.any():
+                df.loc[mask, 'EV Added'] = df.loc[mask, 'EV Added'].astype(str)
+                # Remove currency symbols, commas and any other non-numeric characters except decimal point
+                df.loc[mask, 'EV Added'] = df.loc[mask, 'EV Added'].str.replace('£', '', regex=False)
+                df.loc[mask, 'EV Added'] = df.loc[mask, 'EV Added'].str.replace(',', '', regex=False)
+                df.loc[mask, 'EV Added'] = df.loc[mask, 'EV Added'].str.replace(' ', '', regex=False)
+            
+            # Convert to numeric, coercing errors to NaN
+            df['EV Added'] = pd.to_numeric(df['EV Added'], errors='coerce')
+            
+            # Replace NaN with 0 for charting purposes
+            df['EV Added'] = df['EV Added'].fillna(0)
+            
+            # Ensure it's float64 type for consistency
+            df['EV Added'] = df['EV Added'].astype('float64')
+
+        # Convert Week Commencing to datetime
+        if 'Week Commencing' in df.columns:
+            df['Week Commencing'] = pd.to_datetime(df['Week Commencing'], format='%d/%m/%Y', errors='coerce')
+
         return df
-    
     except Exception as e:
-        st.error(f"Error loading data: {e}")
-        st.error("Please check your Google Sheet permissions and ensure the 'Research - Summary' sheet with 'Tax' worksheet exists.")
-        # Raise the exception to see detailed error message during development
-        raise e
+        st.error(f"Error loading KPI data: {str(e)}")
+        return pd.DataFrame()
 
-# Page configuration
-st.set_page_config(page_title="Global iGaming Regulation & Tax Map", layout="wide")
-
-# Title and description
-st.title("Global iGaming Regulation & Tax Dashboard")
-st.markdown("Interactive map of global iGaming regulations and tax data. Click on countries or filter by region to view detailed information.")
-
-# Load data
-df = load_data()
-
-# Sidebar filters
-st.sidebar.header("Filters")
-
-# Show column names for debugging
-st.sidebar.expander("Debug Information").write(df.columns.tolist())
-
-# Market region filter - with safety check
-if 'Market_region' in df.columns and not df['Market_region'].isna().all():
-    all_market_regions = sorted(df['Market_region'].unique())
-    selected_market_regions = st.sidebar.multiselect("Select Market Regions", all_market_regions, default=all_market_regions)
+# Function to create a static stacked area chart for exporting to Slack
+def create_static_stacked_area_chart(df, columns, start_date=None, end_date=None, date_format='%d/%m/%Y', date_interval='weekly', y_limit=None):
+    """Create a static stacked area chart for exporting."""
+    plt.style.use('ggplot')
     
-    # Filter data based on selection
-    filtered_df = df[df['Market_region'].isin(selected_market_regions)]
-else:
-    st.sidebar.warning("Market_region column not found or is empty.")
-    filtered_df = df  # Use unfiltered data
-
-# Regulation type filter
-if 'Regulation_type' in df.columns and not df['Regulation_type'].isna().all():
-    all_regulation_types = sorted(df['Regulation_type'].unique())
-    selected_regulation_types = st.sidebar.multiselect("Select Regulation Types", all_regulation_types, default=all_regulation_types)
+    # Specify colors for the chart
+    colors = ['#ffd700', '#0084ff', '#04ff00', '#ff3c00', '#ff0084', '#9932CC', '#00CED1', '#FFA07A']
     
-    # Filter data based on selection
-    filtered_df = filtered_df[filtered_df['Regulation_type'].isin(selected_regulation_types)]
-
-# Priority region filter
-if 'Priority region' in df.columns and not df['Priority region'].isna().all():
-    priority_options = ['All', 'Priority Only', 'Non-Priority Only']
-    priority_filter = st.sidebar.radio("Priority Regions", priority_options)
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 6))
     
-    if priority_filter == 'Priority Only':
-        filtered_df = filtered_df[filtered_df['Priority region'] == 'Yes']
-    elif priority_filter == 'Non-Priority Only':
-        filtered_df = filtered_df[filtered_df['Priority region'] != 'Yes']
-
-# Create tabs
-tab1, tab2, tab3, tab4 = st.tabs(["Regulation Map", "Tax Map", "Responsible Gambling", "Data Table"])
-
-# Regulation Map view
-with tab1:
-    st.header("iGaming Regulation by Country")
+    # Filter to columns that exist in the dataframe
+    existing_columns = [col for col in columns if col in df.columns]
     
-    # Safety check for required columns
-    if 'Country_region' not in filtered_df.columns:
-        st.error("Country_region column not found in dataset")
-    elif filtered_df.empty:
-        st.warning("No data available with current filters")
-    else:
-        # Callback for map clicks
-        if "clickData" not in st.session_state:
-            st.session_state.clickData = None
-        
-        # Function to handle country clicks
-        def handle_country_click(trace, points, state):
-            if points.point_inds:
-                point_index = points.point_inds[0]
-                country = filtered_df.iloc[point_index]['Country_region']
-                st.session_state.selected_country = country
-                st.experimental_rerun()
-        
-        # Color coding for regulation status
-        if 'Regulated' in filtered_df.columns:
-            # Create color map based on unique values
-            regulated_values = filtered_df['Regulated'].unique().tolist()
-            if len(regulated_values) > 0:
-                # Create appropriate color mapping
-                color_map = {}
-                for val in regulated_values:
-                    if isinstance(val, str):
-                        lower_val = val.lower()
-                        if "yes" in lower_val or "full" in lower_val:
-                            color_map[val] = "#2E8B57"  # Green
-                        elif "partial" in lower_val or "limited" in lower_val:
-                            color_map[val] = "#FFA500"  # Orange
-                        elif "no" in lower_val or "not" in lower_val or "illegal" in lower_val:
-                            color_map[val] = "#B22222"  # Red
-                        else:
-                            color_map[val] = "#808080"  # Gray for unknown
-                
-                fig = px.choropleth(
-                    filtered_df,
-                    locations="Country_region",  # Column containing country names
-                    locationmode="country names",  # Use country names (alternative is ISO codes)
-                    color="Regulated",  # Color by regulation status
-                    hover_name="Country_region",
-                    hover_data=[col for col in ["Market_region", "Regulation_type", "Offshore?", "Casino", "iGaming", "Betting", "iBetting"] if col in filtered_df.columns],
-                    color_discrete_map=color_map,
-                    title="iGaming Regulation Status by Country (Click on a country for details)"
-                )
-                
-                fig.update_layout(
-                    height=600,
-                    margin={"r": 0, "t": 30, "l": 0, "b": 0},
-                )
-                
-                # Make the map clickable
-                fig.update_traces(
-                    hoverinfo="text+name",
-                    mode="markers",
-                    marker=dict(line=dict(width=2, color='white')),
-                )
-                
-                # Display map
-                map_chart = st.plotly_chart(fig, use_container_width=True)
-                
-                # Get click data (only works in Streamlit 1.10.0+)
-                if st.session_state.clickData is not None:
-                    click_data = st.session_state.clickData
-                    country = click_data['points'][0]['location']
-                    st.session_state.selected_country = country
-            else:
-                st.warning("No regulation status data available")
-        elif 'Legality/Regulation' in filtered_df.columns:
-            # Alternative coloring by Legality/Regulation
-            fig = px.choropleth(
-                filtered_df,
-                locations="Country_region",
-                locationmode="country names",
-                color="Legality/Regulation",
-                hover_name="Country_region",
-                hover_data=[col for col in ["Market_region", "Regulation_type", "Offshore?", "Casino", "iGaming", "Betting", "iBetting"] if col in filtered_df.columns],
-                color_discrete_sequence=px.colors.qualitative.Safe,
-                title="iGaming Regulation Status by Country (Click on a country for details)"
-            )
-            
-            fig.update_layout(
-                height=600,
-                margin={"r": 0, "t": 30, "l": 0, "b": 0},
-            )
-            
-            # Display map with click handling
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning("No regulation status column found in the dataset")
-        
-        # Alternative method for older Streamlit versions
-        st.markdown("""
-        <style>
-        /* Make the map clickable */
-        .js-plotly-plot .plotly .choroplethlayer {
-            cursor: pointer;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        st.write("👆 Click on any country to see detailed information")
-        
-        # Filter for specific gaming types
-        gaming_types = [col for col in ["Casino", "iGaming", "Betting", "iBetting"] if col in filtered_df.columns]
-        if gaming_types:
-            selected_gaming_type = st.selectbox("View regulation status for specific type:", gaming_types)
-            
-            # Create a map for the selected gaming type
-            fig_gaming = px.choropleth(
-                filtered_df,
-                locations="Country_region",
-                locationmode="country names",
-                color=selected_gaming_type,  # Color by selected gaming type status
-                hover_name="Country_region",
-                hover_data=[col for col in ["Market_region", "Regulation_type", selected_gaming_type] if col in filtered_df.columns],
-                color_discrete_sequence=px.colors.qualitative.Safe,
-                title=f"{selected_gaming_type} Regulation Status by Country"
-            )
-            
-            fig_gaming.update_layout(
-                height=500,
-                margin={"r": 0, "t": 30, "l": 0, "b": 0},
-            )
-            
-            st.plotly_chart(fig_gaming, use_container_width=True)
-
-# Tax Map view
-with tab2:
-    st.header("iGaming Tax Rates by Country")
+    if not existing_columns:
+        return None
     
-    # Choose between operator tax and player tax
-    tax_options = []
-    if "Operator_tax" in df.columns:
-        tax_options.append("Operator_tax")
-    if "Player_tax" in df.columns:
-        tax_options.append("Player_tax")
-    if "Tax (iGaming)" in df.columns:
-        tax_options.append("Tax (iGaming)")
+    # Filter out rows with missing Week Commencing
+    df = df[df['Week Commencing'].notna()].copy()
     
-    if tax_options:
-        tax_type = st.radio("Select Tax Type:", tax_options, 
-                          format_func=lambda x: x.replace("_", " ").title())
-        
-        # Create tax rate map
-        fig_tax = px.choropleth(
-            filtered_df,
-            locations="Country_region",
-            locationmode="country names",
-            color=tax_type,
-            hover_name="Country_region",
-            hover_data=["Market_region", "Regulated", tax_type],
-            color_continuous_scale=px.colors.sequential.Bluyl,
-            title=f"{tax_type.replace('_', ' ').title()} by Country",
-            labels={tax_type: f"{tax_type.replace('_', ' ').title()} (%)"}
-        )
-        
-        fig_tax.update_layout(
-            height=600,
-            margin={"r": 0, "t": 30, "l": 0, "b": 0},
-            coloraxis_colorbar={
-                'title': f"{tax_type.replace('_', ' ').title()} (%)"
-            }
-        )
-        
-        st.plotly_chart(fig_tax, use_container_width=True)
-    else:
-        st.info("No tax rate data available in the dataset.")
+    # Sort by date to ensure proper chronological order
+    df = df.sort_values('Week Commencing')
     
-    # Growth rate (CAGR) map if available
-    if 'GGR CAGR' in filtered_df.columns:
-        st.subheader("Market Growth (CAGR) by Country")
-        
-        fig_growth = px.choropleth(
-            filtered_df,
-            locations="Country_region",
-            locationmode="country names",
-            color="GGR CAGR",
-            hover_name="Country_region",
-            hover_data=["Market_region", "Regulated", "GGR CAGR"],
-            color_continuous_scale=px.colors.sequential.Viridis,
-            title="Gross Gaming Revenue CAGR by Country",
-            labels={"GGR CAGR": "Growth Rate (%)"}
-        )
-        
-        fig_growth.update_layout(
-            height=500,
-            margin={"r": 0, "t": 30, "l": 0, "b": 0},
-            coloraxis_colorbar={
-                'title': "Growth Rate (%)"
-            }
-        )
-        
-        st.plotly_chart(fig_growth, use_container_width=True)
-
-# Responsible Gambling view
-with tab3:
-    st.header("Responsible Gambling Measures by Country")
+    # Create a copy of the data for plotting
+    plot_data = df.set_index('Week Commencing')[existing_columns].copy()
     
-    # Check if the responsible gambling columns exist
-    rg_columns = [col for col in df.columns if col in ['Responsible Gambling (iGaming)', 'Stake_limit', 'Deposit_limit', 'Withdrawal_limit']]
+    # Fill NaN values with 0 for proper stacking
+    plot_data = plot_data.fillna(0)
     
-    if 'Responsible Gambling (iGaming)' in rg_columns:
-        # If there's a general RG score column
-        fig_rg = px.choropleth(
-            filtered_df,
-            locations="Country_region",
-            locationmode="country names",
-            color="Responsible Gambling (iGaming)",
-            hover_name="Country_region",
-            hover_data=["Market_region", "Regulated"],
-            color_continuous_scale=px.colors.sequential.Greens,
-            title="Responsible Gambling Score by Country"
-        )
-        
-        fig_rg.update_layout(
-            height=600,
-            margin={"r": 0, "t": 30, "l": 0, "b": 0}
-        )
-        
-        st.plotly_chart(fig_rg, use_container_width=True)
+    # Process date range parameters
+    if start_date is None:
+        # Default to first date in data
+        start_date = plot_data.index.min()
     
-    # Specific Responsible Gambling measures
-    rg_measures = [col for col in ['Stake_limit', 'Deposit_limit', 'Withdrawal_limit'] if col in df.columns]
+    if end_date is None:
+        # Default to last date in data
+        end_date = plot_data.index.max()
     
-    if rg_measures:
-        st.subheader("Responsible Gambling Measures")
-        selected_measure = st.selectbox("Select Measure", rg_measures)
-        
-        # Create a map for the selected measure
-        fig_measure = px.choropleth(
-            filtered_df,
-            locations="Country_region",
-            locationmode="country names",
-            color=selected_measure,
-            hover_name="Country_region",
-            hover_data=["Market_region", selected_measure],
-            color_discrete_sequence=px.colors.qualitative.Safe,
-            title=f"{selected_measure.replace('_', ' ').title()} Requirements by Country"
-        )
-        
-        fig_measure.update_layout(
-            height=500,
-            margin={"r": 0, "t": 30, "l": 0, "b": 0}
-        )
-        
-        st.plotly_chart(fig_measure, use_container_width=True)
-    
-    # If no responsible gambling data is available
-    if not rg_columns:
-        st.info("No responsible gambling data available in the dataset.")
-        
-    # Table of RG measures
-    if rg_measures:
-        st.subheader("Responsible Gambling Measures by Country")
-        rg_data = filtered_df[['Country_region', 'Market_region'] + rg_measures]
-        st.dataframe(rg_data, use_container_width=True)
-
-# Table view
-with tab4:
-    st.header("iGaming Regulations & Tax Data Table")
-    
-    # Search functionality
-    search = st.text_input("Search for a country")
-    if search:
-        display_df = filtered_df[filtered_df['Country_region'].str.contains(search, case=False)]
-    else:
-        display_df = filtered_df
-        
-    # Column selector
-    available_columns = list(display_df.columns)
-    selected_columns = st.multiselect(
-        "Select columns to display",
-        available_columns,
-        default=["Country_region", "Market_region", "Regulated", "Regulation_type", "Operator_tax", "Player_tax"]
-    ) or available_columns  # If nothing selected, show all columns
-    
-    # Display table
-    st.dataframe(display_df[selected_columns], use_container_width=True)
-    
-    # Export functionality
-    if st.button("Export Data"):
-        csv = display_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "Download CSV",
-            csv,
-            "igaming_data.csv",
-            "text/csv",
-            key='download-csv'
-        )
-
-# Country details section (displayed when a country is clicked)
-st.header("Country Details")
-
-# Initialize an empty container for country details
-country_details = st.empty()
-
-# Initialize the selected country from URL parameters or click events
-if "selected_country" not in st.session_state:
-    # Check URL parameters first
-    params = st.experimental_get_query_params()
-    if "country" in params:
-        st.session_state.selected_country = params["country"][0]
-    else:
-        st.session_state.selected_country = None
-
-# Country selection - either from dropdown or map click
-if 'Country_region' in filtered_df.columns and not filtered_df.empty:
-    country_list = sorted(filtered_df['Country_region'].unique())
-    
-    # Create a dropdown for manual selection
-    selected_country_dropdown = st.selectbox(
-        "Select a country or click on the map", 
-        [""] + country_list,
-        index=0
+    # Create stacked area chart based on the columns
+    ax.stackplot(
+        plot_data.index,
+        plot_data.values.T,
+        labels=plot_data.columns,
+        colors=colors[:len(existing_columns)],
+        alpha=0.8,
+        edgecolor='black',
     )
     
-    # Update selected country if dropdown is used
-    if selected_country_dropdown:
-        st.session_state.selected_country = selected_country_dropdown
-
-# Display selected country data
-if st.session_state.selected_country:
-    country_data = filtered_df[filtered_df['Country_region'] == st.session_state.selected_country]
+    # Set x-axis limits based on parameters
+    ax.set_xlim(start_date, end_date)
     
-    if not country_data.empty:
-        with country_details.container():
-            # Main country info header
-            st.subheader(f"{country_data['Country_region'].iloc[0]} - iGaming Regulation & Tax Details")
-            
-            # Create tabs for different categories of information
-            info_tab1, info_tab2, info_tab3, info_tab4 = st.tabs([
-                "Regulation", "Tax & Market", "Responsible Gambling", "Jackpots"
-            ])
-            
-            # Regulation tab
-            with info_tab1:
-                col1, col2 = st.columns([1, 1])
-                
-                with col1:
-                    # Market region
-                    if 'Market_region' in country_data.columns:
-                        st.info(f"**Market Region:** {country_data['Market_region'].iloc[0]}")
-                    
-                    # Regulation info
-                    if 'Regulated' in country_data.columns:
-                        regulated_value = country_data['Regulated'].iloc[0]
-                        if pd.notna(regulated_value):
-                            if str(regulated_value).lower() in ['yes', 'true', '1']:
-                                st.success(f"**Regulated:** {regulated_value}")
-                            elif str(regulated_value).lower() in ['partially', 'limited']:
-                                st.warning(f"**Regulated:** {regulated_value}")
-                            else:
-                                st.error(f"**Regulated:** {regulated_value}")
-                    
-                    # Regulation type
-                    if 'Regulation_type' in country_data.columns and pd.notna(country_data['Regulation_type'].iloc[0]):
-                        st.write(f"**Regulation Type:** {country_data['Regulation_type'].iloc[0]}")
-                    
-                    # Legality/Regulation
-                    if 'Legality/Regulation' in country_data.columns and pd.notna(country_data['Legality/Regulation'].iloc[0]):
-                        st.write(f"**Legality/Regulation:** {country_data['Legality/Regulation'].iloc[0]}")
-                
-                with col2:
-                    # Offshore & Residents info with icons
-                    col_a, col_b = st.columns(2)
-                    
-                    with col_a:
-                        if 'Offshore?' in country_data.columns:
-                            offshore = country_data['Offshore?'].iloc[0]
-                            if pd.notna(offshore):
-                                if str(offshore).lower() in ['yes', 'true', '1']:
-                                    st.write("**Offshore:** ✅")
-                                else:
-                                    st.write("**Offshore:** ❌")
-                    
-                    with col_b:
-                        if 'Residents?' in country_data.columns:
-                            residents = country_data['Residents?'].iloc[0]
-                            if pd.notna(residents):
-                                if str(residents).lower() in ['yes', 'true', '1']:
-                                    st.write("**Residents:** ✅")
-                                else:
-                                    st.write("**Residents:** ❌")
-                    
-                    # Gaming types in a nice format
-                    st.subheader("Available Gaming Types")
-                    gaming_cols = [
-                        ('Casino', 'casino'),
-                        ('iGaming', 'video-game'),
-                        ('Betting', 'target'),
-                        ('iBetting', 'globe')
-                    ]
-                    
-                    for col_name, icon in gaming_cols:
-                        if col_name in country_data.columns and pd.notna(country_data[col_name].iloc[0]):
-                            value = country_data[col_name].iloc[0]
-                            if str(value).lower() in ['regulated', 'yes', 'legal', 'allowed']:
-                                st.success(f"**{col_name}:** {value}")
-                            elif str(value).lower() in ['partially', 'limited']:
-                                st.warning(f"**{col_name}:** {value}")
-                            elif str(value).lower() in ['no', 'illegal', 'prohibited']:
-                                st.error(f"**{col_name}:** {value}")
-                            else:
-                                st.info(f"**{col_name}:** {value}")
-                
-                # Notes in an expander
-                if 'Notes' in country_data.columns and pd.notna(country_data['Notes'].iloc[0]):
-                    with st.expander("Additional Notes"):
-                        st.write(country_data['Notes'].iloc[0])
-                
-                # Triggering reviews
-                if 'Triggering reviews' in country_data.columns and pd.notna(country_data['Triggering reviews'].iloc[0]):
-                    with st.expander("Triggering Reviews"):
-                        st.write(country_data['Triggering reviews'].iloc[0])
-            
-            # Tax & Market tab
-            with info_tab2:
-                col1, col2 = st.columns([1, 1])
-                
-                with col1:
-                    # Tax information in metrics
-                    st.subheader("Tax Rates")
-                    
-                    tax_cols = [col for col in ['Operator_tax', 'Player_tax', 'Tax (iGaming)'] if col in country_data.columns]
-                    if tax_cols:
-                        for tax_col in tax_cols:
-                            if pd.notna(country_data[tax_col].iloc[0]):
-                                st.metric(
-                                    tax_col.replace('_', ' ').title(), 
-                                    f"{country_data[tax_col].iloc[0]}%"
-                                )
-                    
-                    # Player accounts if available
-                    if 'Accounts_#' in country_data.columns and pd.notna(country_data['Accounts_#'].iloc[0]):
-                        try:
-                            accounts = int(float(country_data['Accounts_#'].iloc[0]))
-                            st.metric("Registered Player Accounts", f"{accounts:,}")
-                        except (ValueError, TypeError):
-                            st.write(f"**Player Accounts:** {country_data['Accounts_#'].iloc[0]}")
-                
-                with col2:
-                    # Growth rate if available
-                    if 'GGR CAGR' in country_data.columns and pd.notna(country_data['GGR CAGR'].iloc[0]):
-                        st.metric(
-                            "Growth Rate (CAGR)", 
-                            f"{country_data['GGR CAGR'].iloc[0]}%",
-                            delta=None
-                        )
-                    
-                    # Create a bar chart comparing with regional average if tax data exists
-                    st.subheader("Regional Comparison")
-                    
-                    tax_columns = [col for col in ['Operator_tax', 'Player_tax', 'Tax (iGaming)'] 
-                                if col in country_data.columns and pd.notna(country_data[col].iloc[0])]
-                    
-                    if tax_columns and 'Market_region' in country_data.columns:
-                        region = country_data['Market_region'].iloc[0]
-                        region_data = filtered_df[filtered_df['Market_region'] == region]
-                        
-                        # Prepare data for comparison
-                        comparison_data = []
-                        for tax in tax_columns:
-                            country_val = country_data[tax].iloc[0]
-                            region_avg = region_data[tax].mean()
-                            
-                            comparison_data.append({
-                                'Metric': tax.replace('_', ' ').title(),
-                                f'{st.session_state.selected_country}': country_val,
-                                f'{region} Average': region_avg
-                            })
-                        
-                        if comparison_data:
-                            comparison_df = pd.DataFrame(comparison_data)
-                            
-                            # Reshape for plotting
-                            plot_df = pd.melt(
-                                comparison_df, 
-                                id_vars=['Metric'], 
-                                value_vars=[f'{st.session_state.selected_country}', f'{region} Average'],
-                                var_name='Entity', 
-                                value_name='Tax Rate (%)'
-                            )
-                            
-                            fig = px.bar(
-                                plot_df, 
-                                x='Metric', 
-                                y='Tax Rate (%)', 
-                                color='Entity',
-                                barmode='group',
-                                title=f"Tax Comparison with {region} Average"
-                            )
-                            
-                            st.plotly_chart(fig, use_container_width=True)
-            
-            # Responsible Gambling tab
-            with info_tab3:
-                st.subheader("Responsible Gambling Measures")
-                
-                # RG Score if available
-                if 'Responsible Gambling (iGaming)' in country_data.columns and pd.notna(country_data['Responsible Gambling (iGaming)'].iloc[0]):
-                    score = country_data['Responsible Gambling (iGaming)'].iloc[0]
-                    try:
-                        score_float = float(score)
-                        # Create a progress bar for the score
-                        st.write(f"**RG Score:** {score_float}/10")
-                        st.progress(min(score_float/10, 1.0))
-                    except (ValueError, TypeError):
-                        st.write(f"**RG Score:** {score}")
-                
-                # RG measures in a nice format
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Stake limit
-                    if 'Stake_limit' in country_data.columns and pd.notna(country_data['Stake_limit'].iloc[0]):
-                        st.write(f"**Stake Limit:** {country_data['Stake_limit'].iloc[0]}")
-                    
-                    # Deposit limit
-                    if 'Deposit_limit' in country_data.columns and pd.notna(country_data['Deposit_limit'].iloc[0]):
-                        st.write(f"**Deposit Limit:** {country_data['Deposit_limit'].iloc[0]}")
-                
-                with col2:
-                    # Withdrawal limit
-                    if 'Withdrawal_limit' in country_data.columns and pd.notna(country_data['Withdrawal_limit'].iloc[0]):
-                        st.write(f"**Withdrawal Limit:** {country_data['Withdrawal_limit'].iloc[0]}")
-                    
-                    # Priority region
-                    if 'Priority region' in country_data.columns and pd.notna(country_data['Priority region'].iloc[0]):
-                        priority = country_data['Priority region'].iloc[0]
-                        if str(priority).lower() in ['yes', 'true', '1']:
-                            st.write("**Priority Region:** ✅")
-                        else:
-                            st.write("**Priority Region:** ❌")
-            
-            # Jackpots tab - connection to Jackpot Map
-            with info_tab4:
-                st.subheader(f"Available Jackpots in {st.session_state.selected_country}")
-                
-                # Connect to jackpot data
-                jackpot_data = connect_to_jackpots(st.session_state.selected_country)
-                
-                if not jackpot_data.empty:
-                    # Display jackpot count
-                    st.success(f"Found {len(jackpot_data)} jackpots available in {st.session_state.selected_country}")
-                    
-                    # Create columns for metrics
-                    try:
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Total Jackpots", len(jackpot_data))
-                        
-                        with col2:
-                            if "Provider" in jackpot_data.columns:
-                                unique_providers = jackpot_data["Provider"].nunique()
-                                st.metric("Unique Providers", unique_providers)
-                        
-                        with col3:
-                            if "Jackpot Group" in jackpot_data.columns:
-                                unique_groups = jackpot_data["Jackpot Group"].nunique()
-                                st.metric("Jackpot Groups", unique_groups)
-                    except Exception as e:
-                        st.warning(f"Error calculating jackpot metrics: {e}")
-                    
-                    # Display the jackpot data table
-                    display_columns = ["Game Name", "Provider", "Jackpot Group", "Type", "Operator"]
-                    display_columns = [col for col in display_columns if col in jackpot_data.columns]
-                    
-                    if display_columns:
-                        st.dataframe(jackpot_data[display_columns], use_container_width=True)
-                    else:
-                        st.dataframe(jackpot_data, use_container_width=True)
-                        
-                    # Provide a link to the full Jackpot Map dashboard
-                    if st.button(f"Analyze All Jackpots for {st.session_state.selected_country} in Jackpot Map"):
-                        # Set session state variables to be used in the Jackpot Map
-                        st.session_state["jackpot_filter_country"] = st.session_state.selected_country
-                        
-                        # Create URL parameters for navigation
-                        params = {
-                            "page": "jackpot_map",
-                            "country": st.session_state.selected_country,
-                            "filter": "true"
-                        }
-                        
-                        # Navigate to Jackpot Map page
-                        st.experimental_set_query_params(**params)
-                else:
-                    st.info(f"No jackpot data available for {st.session_state.selected_country}.")
-                    st.warning("This could be because the country doesn't have jackpots available, or the country name doesn't match the regions in your jackpot data.")
-                    
-                    # Help text to explain how to address this
-                    with st.expander("How to fix this"):
-                        st.markdown("""
-                        To fix this, you can:
-                        
-                        1. Check if your country name matches a region in your jackpot data
-                        2. Update the country-to-region mapping in the `connect_to_jackpots` function
-                        3. Make sure your jackpot data is properly loaded from Google Sheets
-                        """)
-                    
-                    # Still provide a link to the jackpot map
-                    if st.button("Go to Jackpot Map Dashboard"):
-                        st.experimental_set_query_params(page="jackpot_map")
+    # Configure x-axis date ticks based on interval
+    if date_interval == 'daily':
+        ax.xaxis.set_major_locator(mdates.DayLocator())
+    elif date_interval == 'weekly':
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=0))  # Monday
+    elif date_interval == 'monthly':
+        ax.xaxis.set_major_locator(mdates.MonthLocator())
+    
+    # Format the plot
+    ax.set_title('KPI Metrics Over Time', fontsize=14, pad=20)
+    ax.set_xlabel('Week Commencing', fontsize=12)
+    ax.set_ylabel('Value', fontsize=12)
+    ax.tick_params(axis='x', rotation=45, labelsize=10)
+    ax.tick_params(axis='y', labelsize=10)
+    ax.grid(True, linestyle='--', alpha=0.7)
+    
+    # Format x-axis with dates using the specified format
+    ax.xaxis.set_major_formatter(mdates.DateFormatter(date_format))
+    
+    # Format y-axis with proper number formatting
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_number))
+    
+    # Ensure y-axis starts at 0
+    if y_limit:
+        ax.set_ylim(0, y_limit)
     else:
-        st.warning(f"No data available for {st.session_state.selected_country}")
-else:
-    st.info("Click on a country in the map or select from the dropdown to see detailed information")
+        ax.set_ylim(0, None)
+    
+    # Add legend with good placement
+    ax.legend(
+        loc='upper left',
+        fontsize=10,
+        framealpha=0.9,
+        facecolor='white',
+        edgecolor='gray'
+    )
+    
+    plt.tight_layout(pad=3.0)
+    return fig
 
-# Footer
-st.markdown("---")
-st.markdown("Data source: Research - Summary (Tax worksheet)")
+# Function to create a static EV Added chart for exporting to Slack
+def create_static_ev_added_chart(df, start_date=None, end_date=None, date_format='%d/%m/%Y', date_interval='weekly'):
+    """Create a static EV Added chart for exporting."""
+    plt.style.use('ggplot')
+    
+    # Use gold color for money/value
+    colors = ['#DAA520']  # Golden color
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(8, 4))
+    
+    # Make sure EV Added column exists
+    if 'EV Added' not in df.columns:
+        return None
+    
+    # Filter out rows with missing Week Commencing
+    df = df[df['Week Commencing'].notna()].copy()
+    
+    # Sort by date to ensure proper chronological order
+    df = df.sort_values('Week Commencing')
+    
+    # Create a copy of the data for plotting
+    ev_data = df[['Week Commencing', 'EV Added']].copy()
+    
+    # Replace NaN with 0
+    ev_data = ev_data.fillna(0)
+    
+    # Set the index to Week Commencing for plotting
+    ev_data = ev_data.set_index('Week Commencing')
+    
+    # Process date range parameters
+    if start_date is None:
+        # Default to first date in data
+        start_date = ev_data.index.min()
+    
+    if end_date is None:
+        # Default to last date in data
+        end_date = ev_data.index.max()
+    
+    # Plot line for EV Added
+    ax.plot(
+        ev_data.index,
+        ev_data['EV Added'],
+        label='EV Added',
+        color="#000000",
+        marker='o',
+        markersize=5,
+        alpha=0.8
+    )
+    
+    # Create the area chart
+    ax.fill_between(
+        ev_data.index,
+        ev_data['EV Added'],
+        0,  # Fill down to 0
+        color=colors[0],
+        alpha=0.8,
+        label='EV Added'
+    )
+    
+    # Set x-axis limits based on parameters
+    ax.set_xlim(start_date, end_date)
+    
+    # Configure x-axis date ticks based on interval
+    if date_interval == 'daily':
+        ax.xaxis.set_major_locator(mdates.DayLocator())
+    elif date_interval == 'weekly':
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=0))  # Monday
+    elif date_interval == 'monthly':
+        ax.xaxis.set_major_locator(mdates.MonthLocator())
+    
+    # Format the plot
+    ax.set_title('EV Added Over Time', fontsize=14, pad=20)
+    ax.set_xlabel('Week Commencing', fontsize=12)
+    ax.set_ylabel('EV Added (£)', fontsize=12)
+    ax.tick_params(axis='x', rotation=45, labelsize=10)
+    ax.tick_params(axis='y', labelsize=10)
+    ax.grid(True, linestyle='--', alpha=0.7)
+    
+    # Format x-axis with dates using the specified format
+    ax.xaxis.set_major_formatter(mdates.DateFormatter(date_format))
+    
+    # Format y-axis with currency formatting
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(format_currency))
+    
+    # Ensure y-axis starts at 0
+    ax.set_ylim(0, None)
+    
+    plt.tight_layout(pad=3.0)
+    return fig
+
+# Function to create an interactive stacked area chart with Altair
+def create_interactive_stacked_area_chart(df, columns, start_date=None, end_date=None, y_limit=None):
+    """Create an interactive stacked area chart with Altair."""
+    # Filter to columns that exist in the dataframe
+    existing_columns = [col for col in columns if col in df.columns]
+    
+    if not existing_columns:
+        st.error("None of the requested columns exist in the data")
+        return None
+    
+    # Filter out rows with missing Week Commencing
+    df = df[df['Week Commencing'].notna()].copy()
+    
+    # Sort by date to ensure proper chronological order
+    df = df.sort_values('Week Commencing')
+    
+    # Process date range parameters
+    if start_date is None:
+        # Default to first date in data
+        start_date = df['Week Commencing'].min()
+    
+    if end_date is None:
+        # Default to last date in data
+        end_date = df['Week Commencing'].max()
+    
+    # Filter by date range
+    df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)]
+    
+    # Prepare data for Altair
+    # We need to reshape the data from wide to long format
+    plot_data = df[['Week Commencing'] + existing_columns].copy()
+    plot_data = plot_data.melt(
+        id_vars=['Week Commencing'],
+        value_vars=existing_columns,
+        var_name='KPI',
+        value_name='Value'
+    )
+    
+    # Fill NaN values with 0
+    plot_data['Value'] = plot_data['Value'].fillna(0)
+    
+    # Create a selection for the legend
+    selection = alt.selection_point(fields=['KPI'], bind='legend')
+    
+    # Create Altair chart
+    chart = alt.Chart(plot_data).mark_area().encode(
+        x=alt.X('Week Commencing:T', title='Week Commencing'),
+        y=alt.Y('sum(Value):Q', title='Value', scale=alt.Scale(domain=[0, y_limit]) if y_limit else alt.Scale(zero=True)),
+        color=alt.Color('KPI:N', scale=alt.Scale(scheme='category10')),
+        tooltip=[
+            alt.Tooltip('Week Commencing:T', title='Date', format='%d %b %Y'),
+            alt.Tooltip('KPI:N', title='Metric'),
+            alt.Tooltip('Value:Q', title='Value', format=',.0f')
+        ],
+        opacity=alt.condition(selection, alt.value(0.8), alt.value(0.2))
+    ).add_params(
+        selection
+    ).properties(
+        title='KPI Metrics Over Time',
+        height=400
+    ).configure_axis(
+        labelFontSize=12,
+        titleFontSize=14
+    ).configure_title(
+        fontSize=16
+    ).configure_legend(
+        titleFontSize=14,
+        labelFontSize=12
+    ).interactive()
+    
+    return chart
+
+# Function to create an interactive EV Added chart with Altair
+def create_interactive_ev_added_chart(df, start_date=None, end_date=None):
+    """Create an interactive EV Added chart with Altair."""
+    # Make sure EV Added column exists
+    if 'EV Added' not in df.columns:
+        st.error("'EV Added' column doesn't exist in the data")
+        return None
+    
+    # Filter out rows with missing Week Commencing
+    df = df[df['Week Commencing'].notna()].copy()
+    
+    # Sort by date to ensure proper chronological order
+    df = df.sort_values('Week Commencing')
+    
+    # Process date range parameters
+    if start_date is None:
+        # Default to first date in data
+        start_date = df['Week Commencing'].min()
+    
+    if end_date is None:
+        # Default to last date in data
+        end_date = df['Week Commencing'].max()
+    
+    # Filter by date range
+    filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
+    
+    # Create a debug printout to see if we have data
+    st.write(f"Debug: Found {len(filtered_df)} rows in date range")
+    st.write(f"Debug: Sum of EV Added is {filtered_df['EV Added'].sum()}")
+    
+    # Check if we have any data to plot
+    if filtered_df.empty:
+        st.warning("No data to display for the selected date range.")
+        return None
+    
+    # Instead of checking sum, let's make sure we properly convert data
+    # Prepare data for Altair
+    plot_data = filtered_df[['Week Commencing', 'EV Added']].copy()
+    
+    # Explicitly make sure values are numeric and replace NaN with 0
+    # IMPORTANT: Convert to float64 explicitly to ensure proper handling
+    plot_data['EV Added'] = pd.to_numeric(plot_data['EV Added'], errors='coerce').astype('float64').fillna(0)
+    
+    # If all values are still zero after conversion, warn but still show chart
+    if plot_data['EV Added'].sum() == 0:
+        st.warning("All EV Added values are zero for the selected date range.")
+    
+    # Create a base chart
+    base = alt.Chart(plot_data).encode(
+        x=alt.X('Week Commencing:T', title='Week Commencing', 
+                axis=alt.Axis(format='%d %b %y', labelAngle=-45))
+    )
+    
+    # Create area chart (now with explicit type definition)
+    area = base.mark_area(
+        color='goldenrod',
+        opacity=0.6
+    ).encode(
+        y=alt.Y('EV Added:Q', title='EV Added (£)', scale=alt.Scale(zero=True)),
+        tooltip=[
+            alt.Tooltip('Week Commencing:T', title='Date', format='%d %b %Y'),
+            alt.Tooltip('EV Added:Q', title='EV Added', format='£,.2f')
+        ]
+    )
+    
+    # Add line (with explicit type definition)
+    line = base.mark_line(color='black', strokeWidth=2).encode(
+        y=alt.Y('EV Added:Q')
+    )
+    
+    # Add points (with explicit type definition)
+    points = base.mark_circle(color='black', size=60).encode(
+        y=alt.Y('EV Added:Q')
+    )
+    
+    # Combine charts and configure with fixed width instead of container
+    chart = alt.layer(area, line, points).properties(
+        title=alt.TitleParams(
+            text='EV Added Over Time',
+            fontSize=16
+        ),
+        height=400,
+        width=800  # Fixed width instead of 'container'
+    ).interactive()
+    
+    return chart
+
+# Main app code
+def main():
+    # Check if the user is authenticated
+    if check_password():
+        # Log the page view with IP
+        if "username" in st.session_state and "ip_address" in st.session_state:
+            log_ip_activity(st.session_state["username"], "page_view_kpis", st.session_state["ip_address"])
+
+        # Display logout button in the sidebar
+        st.sidebar.button("Logout", on_click=logout)
+
+        # Display user information
+        st.sidebar.info(f"Logged in as: {st.session_state['username']} ({st.session_state['user_role']})")
+
+        # Display IP address (only for admins)
+        if st.session_state.get("user_role") == "admin":
+            st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
+
+        # Main app layout
+        st.title("📈 KPI Dashboard")
+        st.write("Analyze and visualize Key Performance Indicators (KPIs).")
+        
+        # Load KPI data
+        with st.spinner("Loading KPI data from Google Sheets..."):
+            df = load_kpi_data()
+            
+        if df.empty:
+            st.error("Failed to load KPI data. Please check your connection to Google Sheets.")
+            st.stop()
+        
+        # Get the available date range
+        date_range = df['Week Commencing'].sort_values()
+        min_date = date_range.min()
+        max_date = date_range.max()
+        
+        st.success(f"Successfully loaded KPI data from {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}")
+        
+        # Sidebar filters
+        st.sidebar.header("Filters")
+        
+        # Date range selection
+        st.sidebar.subheader("Date Range")
+        date_filter = st.sidebar.radio(
+            "Select date range",
+            ["All time", "Last 4 weeks", "Last 12 weeks", "Custom range"]
+        )
+        
+        if date_filter == "All time":
+            start_date = min_date
+            end_date = max_date
+        elif date_filter == "Last 4 weeks":
+            end_date = max_date
+            start_date = end_date - timedelta(weeks=4)
+        elif date_filter == "Last 12 weeks":
+            end_date = max_date
+            start_date = end_date - timedelta(weeks=12)
+        else:  # Custom range
+            col1, col2 = st.sidebar.columns(2)
+            with col1:
+                start_date = st.date_input(
+                    "Start date",
+                    value=min_date,
+                    min_value=min_date,
+                    max_value=max_date
+                )
+            with col2:
+                end_date = st.date_input(
+                    "End date",
+                    value=max_date,
+                    min_value=min_date,
+                    max_value=max_date
+                )
+            start_date = pd.to_datetime(start_date)
+            end_date = pd.to_datetime(end_date)
+        
+        # Keep date format and interval for backward compatibility with static exports
+        date_format = st.sidebar.selectbox(
+            "Date format (for exports)",
+            ["'%d %b'", "'%Y-%m-%d'", "'%b %Y'"],
+            index=0,
+            format_func=lambda x: x.replace("'", "")
+        )
+        
+        date_interval = st.sidebar.selectbox(
+            "Date interval (for exports)",
+            ["weekly", "daily", "monthly"],
+            index=0
+        )
+        
+        # Chart options
+        st.sidebar.subheader("Chart Options")
+        
+        # Y-axis limit
+        y_limit = st.sidebar.number_input(
+            "Y-axis limit (leave blank for auto)",
+            min_value=None,
+            value=None
+        )
+        
+        # Available KPI metrics
+        available_kpis = [
+            'New Games Added', 
+            'Scrapers added to backlog', 
+            'N New Games Played', 
+            'Scrapers Done',
+            'Scrapers in backlog', 
+            'Av. days to model', 
+            'Jackpots Played',
+            'Jackpots Won', 
+            'Jackpots Missed', 
+            'Reports Sent', 
+            'KPIs recorded',
+            'Meetings Run', 
+            'Total', 
+            'Paused', 
+            'Added this week'
+        ]
+        
+        # Let users select which KPIs to display
+        st.sidebar.subheader("Select KPIs for Chart")
+        selected_kpis = []
+        
+        # Group metrics into categories for easier selection
+        scraper_metrics = [col for col in available_kpis if 'Scraper' in col]
+        game_metrics = [col for col in available_kpis if 'Game' in col or 'Jackpot' in col]
+        other_metrics = [col for col in available_kpis if col not in scraper_metrics and col not in game_metrics]
+        
+        with st.sidebar.expander("Scraper Metrics", expanded=True):
+            for col in scraper_metrics:
+                if col in df.columns:
+                    if st.checkbox(col, value=True):
+                        selected_kpis.append(col)
+        
+        with st.sidebar.expander("Game Metrics", expanded=True):
+            for col in game_metrics:
+                if col in df.columns:
+                    if st.checkbox(col, value=True):
+                        selected_kpis.append(col)
+        
+        with st.sidebar.expander("Other Metrics", expanded=False):
+            for col in other_metrics:
+                if col in df.columns:
+                    if st.checkbox(col, value=False):
+                        selected_kpis.append(col)
+        
+        # Display data in tabs
+        tab1, tab2, tab3 = st.tabs(["📊 Charts", "📋 Raw Data", "📂 Export"])
+        
+        with tab1:
+            # First display the stacked area chart with selected KPIs
+            st.subheader("KPI Metrics Over Time")
+            if selected_kpis:
+                # Create interactive chart with Altair
+                interactive_chart = create_interactive_stacked_area_chart(
+                    df,
+                    columns=selected_kpis,
+                    start_date=start_date,
+                    end_date=end_date,
+                    y_limit=y_limit
+                )
+                
+                if interactive_chart:
+                    # Add a toggle for chart type
+                    chart_type = st.radio(
+                        "Chart Type",
+                        ["Interactive (Altair)", "Static (Matplotlib)", "Simple (Streamlit)"],
+                        horizontal=True,
+                        key="kpi_chart_type"
+                    )
+                    
+                    if chart_type == "Interactive (Altair)" and interactive_chart is not None:
+                        try:
+                            st.altair_chart(interactive_chart, use_container_width=True)
+                            
+                            # Add information about interactivity features
+                            st.info("💡 **Interactive Features:** Click and drag to zoom, double-click to reset, hover for details, click legend items to show/hide metrics.")
+                        except Exception as e:
+                            st.error(f"Error rendering Altair chart: {str(e)}")
+                            st.info("Falling back to Matplotlib chart...")
+                            chart_type = "Static (Matplotlib)"
+                    
+                    if chart_type == "Static (Matplotlib)":
+                        # Create a static matplotlib chart using the existing function
+                        static_chart = create_static_stacked_area_chart(
+                            df,
+                            columns=selected_kpis,
+                            start_date=start_date,
+                            end_date=end_date,
+                            date_format=date_format.replace("'", ""),
+                            date_interval=date_interval,
+                            y_limit=y_limit
+                        )
+                        
+                        if static_chart:
+                            st.pyplot(static_chart)
+                    
+                    elif chart_type == "Simple (Streamlit)":
+                        # Use Streamlit's built-in chart
+                        filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
+                        
+                        # Keep only selected KPIs
+                        existing_columns = [col for col in selected_kpis if col in filtered_df.columns]
+                        if existing_columns:
+                            filtered_df = filtered_df[['Week Commencing'] + existing_columns].set_index('Week Commencing')
+                            st.area_chart(filtered_df, use_container_width=True)
+                    
+                    # Option to upload to Slack (need to create static version for this)
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        slack_message = st.text_input(
+                            "Slack message (optional)",
+                            value="KPI Metrics Chart"
+                        )
+                    with col2:
+                        if st.button("Upload to Slack", key="upload_kpi"):
+                            # Create a static version for export
+                            static_chart = create_static_stacked_area_chart(
+                                df,
+                                columns=selected_kpis,
+                                start_date=start_date,
+                                end_date=end_date,
+                                date_format=date_format.replace("'", ""),
+                                date_interval=date_interval,
+                                y_limit=y_limit
+                            )
+                            
+                            if static_chart:
+                                # Save chart to a temporary file
+                                chart_file = "kpi_chart.png"
+                                static_chart.savefig(
+                                    chart_file,
+                                    bbox_inches='tight',
+                                    dpi=300,
+                                    facecolor='white',
+                                    edgecolor='none'
+                                )
+                                
+                                # Upload to Slack
+                                upload_success = upload_to_slack(chart_file, slack_message)
+                                if upload_success:
+                                    st.success("Chart uploaded to Slack successfully!")
+                                else:
+                                    st.error("Failed to upload chart to Slack.")
+            else:
+                st.warning("Please select at least one KPI metric to display.")
+            
+            # Display EV Added chart if the column exists
+            if 'EV Added' in df.columns:
+                st.subheader("EV Added Over Time")
+                
+                # Create interactive EV Added chart with Altair
+                interactive_ev_chart = create_interactive_ev_added_chart(
+                    df,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                
+                if interactive_ev_chart:
+                        # Debug information to show what's being plotted
+                    with st.expander("Debug EV Added Data", expanded=False):
+                        debug_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
+                        debug_df = debug_df[['Week Commencing', 'EV Added']].sort_values('Week Commencing')
+                        st.write("EV Added values being plotted:")
+                        st.dataframe(debug_df)
+                        
+                        # Show stats
+                        non_zero = (debug_df['EV Added'] > 0).sum()
+                        total = len(debug_df)
+                        st.write(f"Non-zero values: {non_zero} out of {total} rows")
+                        st.write(f"Sum of EV Added: £{debug_df['EV Added'].sum():,.2f}")
+                        st.write(f"Max EV Added: £{debug_df['EV Added'].max():,.2f}")
+                    
+                    # Add a toggle for chart type
+                    chart_type = st.radio(
+                        "Chart Type",
+                        ["Interactive (Altair)", "Static (Matplotlib)", "Simple (Streamlit)"],
+                        horizontal=True,
+                        key="ev_chart_type"
+                    )
+                    
+                    if chart_type == "Interactive (Altair)" and interactive_ev_chart is not None:
+                        try:
+                            st.altair_chart(interactive_ev_chart, use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Error rendering Altair chart: {str(e)}")
+                            st.info("Falling back to Matplotlib chart...")
+                            chart_type = "Static (Matplotlib)"
+                    
+                    if chart_type == "Static (Matplotlib)":
+                        # Create a static matplotlib chart
+                        fig, ax = plt.subplots(figsize=(8, 4))
+                        
+                        # Get the filtered data
+                        filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
+                        filtered_df = filtered_df[['Week Commencing', 'EV Added']].sort_values('Week Commencing')
+                        filtered_df['EV Added'] = pd.to_numeric(filtered_df['EV Added'], errors='coerce').fillna(0)
+                        
+                        # Plot the data
+                        ax.plot(
+                            filtered_df['Week Commencing'],
+                            filtered_df['EV Added'],
+                            marker='o',
+                            linestyle='-',
+                            color='black',
+                            linewidth=0.5,
+                            markersize=2
+                        )
+                        
+                        # Fill the area
+                        ax.fill_between(
+                            filtered_df['Week Commencing'],
+                            filtered_df['EV Added'],
+                            color='goldenrod',
+                            alpha=0.6
+                        )
+                        
+                        # Format the chart
+                        ax.set_title('EV Added Over Time', fontsize=8)
+                        ax.set_xlabel('Week Commencing', fontsize=8)
+                        ax.set_ylabel('EV Added (£)', fontsize=4)
+                        ax.grid(True, linestyle='--', alpha=0.7)
+                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d %b'))
+                        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, pos: f'£{x:,.0f}'))
+                        plt.xticks(rotation=45)
+                        plt.tight_layout()
+                        
+                        # Display the matplotlib chart
+                        st.pyplot(fig)
+                    
+                    elif chart_type == "Simple (Streamlit)":
+                        # Use Streamlit's built-in chart
+                        filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
+                        filtered_df = filtered_df[['Week Commencing', 'EV Added']].sort_values('Week Commencing')
+                        filtered_df['EV Added'] = pd.to_numeric(filtered_df['EV Added'], errors='coerce').fillna(0)
+                        filtered_df.set_index('Week Commencing', inplace=True)
+                        
+                        # Display with Streamlit's built-in chart
+                        st.line_chart(filtered_df['EV Added'], use_container_width=True)
+                    
+                    # Option to upload to Slack (need to create static version for this)
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        slack_message = st.text_input(
+                            "Slack message (optional)",
+                            value="EV Added Chart"
+                        )
+                    with col2:
+                        if st.button("Upload to Slack", key="upload_ev"):
+                            # Create a static version for export
+                            static_ev_chart = create_static_ev_added_chart(
+                                df,
+                                start_date=start_date,
+                                end_date=end_date,
+                                date_format=date_format.replace("'", ""),
+                                date_interval=date_interval
+                            )
+                            
+                            if static_ev_chart:
+                                # Save chart to a temporary file
+                                chart_file = "ev_chart.png"
+                                static_ev_chart.savefig(
+                                    chart_file,
+                                    bbox_inches='tight',
+                                    dpi=300,
+                                    facecolor='white',
+                                    edgecolor='none'
+                                )
+                                
+                                # Upload to Slack
+                                upload_success = upload_to_slack(chart_file, slack_message)
+                                if upload_success:
+                                    st.success("Chart uploaded to Slack successfully!")
+                                else:
+                                    st.error("Failed to upload chart to Slack.")
+        
+        with tab2:
+            # Display raw data with filters
+            st.subheader("Raw KPI Data")
+            
+            # Filter data based on date range
+            filtered_df = df[
+                (df['Week Commencing'] >= start_date) & 
+                (df['Week Commencing'] <= end_date)
+            ].copy()
+            
+            # Sort by date
+            filtered_df = filtered_df.sort_values('Week Commencing', ascending=False)
+            
+            # Column selection
+            with st.expander("Select Columns to Display", expanded=False):
+                all_columns = df.columns.tolist()
+                selected_columns = st.multiselect(
+                    "Select columns",
+                    all_columns,
+                    default=['Week Commencing'] + selected_kpis
+                )
+            
+            if not selected_columns:
+                selected_columns = ['Week Commencing'] + (selected_kpis if selected_kpis else [])
+            
+            # Make sure selected columns exist in the dataframe
+            display_columns = [col for col in selected_columns if col in filtered_df.columns]
+            
+            if not display_columns:
+                st.warning("No columns selected for display.")
+            else:
+                # Format the Week Commencing column for display
+                if 'Week Commencing' in display_columns:
+                    filtered_df['Week Commencing'] = filtered_df['Week Commencing'].dt.strftime('%Y-%m-%d')
+                
+                # Display the filtered dataframe
+                st.dataframe(
+                    filtered_df[display_columns],
+                    use_container_width=True
+                )
+        
+        with tab3:
+            # Export options
+            st.subheader("Export Data")
+            
+            # Filter data based on date range
+            export_df = df[
+                (df['Week Commencing'] >= start_date) & 
+                (df['Week Commencing'] <= end_date)
+            ].copy()
+            
+            # Format date for export
+            export_df['Week Commencing'] = export_df['Week Commencing'].dt.strftime('%Y-%m-%d')
+            
+            # Download as CSV
+            st.download_button(
+                label="Download as CSV",
+                data=export_df.to_csv(index=False).encode('utf-8'),
+                file_name=f"kpi_data_{start_date.strftime('%Y%m%d')}_to_{end_date.strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
+            
+            # Download as Excel
+            try:
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                    export_df.to_excel(writer, sheet_name='KPI Data', index=False)
+                    # Auto-adjust columns' width
+                    for column in export_df:
+                        column_width = max(export_df[column].astype(str).map(len).max(), len(column))
+                        col_idx = export_df.columns.get_loc(column)
+                        writer.sheets['KPI Data'].set_column(col_idx, col_idx, column_width)
+                
+                buffer.seek(0)
+                
+                st.download_button(
+                    label="Download as Excel",
+                    data=buffer,
+                    file_name=f"kpi_data_{start_date.strftime('%Y%m%d')}_to_{end_date.strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            except Exception as e:
+                st.error(f"Error creating Excel file: {str(e)}")
+            
+    else:
+        st.warning("Please log in to access the KPI dashboard.")
+
+if __name__ == "__main__":
+    main()
