@@ -325,9 +325,6 @@ def load_data():
         # Raise the exception to see detailed error message during development
         raise e
 
-# Page configuration
-st.set_page_config(page_title="Global iGaming Regulation & Tax Map", layout="wide")
-
 # Title and description
 st.title("Global iGaming Regulation & Tax Dashboard")
 st.markdown("Interactive map of global iGaming regulations and tax data. Click on countries or filter by region to view detailed information.")
