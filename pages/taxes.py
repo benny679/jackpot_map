@@ -1,4 +1,56 @@
-import streamlit as st
+# Add this at the beginning of your script, after the imports
+def connect_to_jackpots(country=None):
+    """
+    Function to connect to jackpot data and get jackpots for a specific country.
+    Uses the same data source as the Jackpot Map dashboard.
+    
+    Args:
+        country (str, optional): Country to filter jackpots for. Defaults to None.
+        
+    Returns:
+        pd.DataFrame: DataFrame containing jackpot data
+    """
+    try:
+        # Use the same data loading function as in your dashboard
+        from utils.data_loader import load_sheet_data
+        
+        # Load the jackpot data
+        jackpot_df = load_sheet_data()
+        
+        # Map country to appropriate region if needed
+        country_to_region = {
+            # Add your country to region mappings here
+            "United Kingdom": "UK & Ireland",
+            "Ireland": "UK & Ireland",
+            "Germany": "Europe",
+            "France": "Europe",
+            "Spain": "Europe",
+            "Italy": "Europe",
+            "United States": "North America",
+            "Canada": "North America",
+            # Add more mappings as needed
+        }
+        
+        # Filter by country/region if specified
+        if country and not jackpot_df.empty:
+            # Try direct country match first (if your data has a Country column)
+            if "Country" in jackpot_df.columns:
+                filtered_jackpots = jackpot_df[jackpot_df["Country"] == country]
+            # If no direct match or no Country column, try matching by Region
+            elif "Region" in jackpot_df.columns and country in country_to_region:
+                region = country_to_region.get(country, country)
+                filtered_jackpots = jackpot_df[jackpot_df["Region"] == region]
+            else:
+                # If no match possible, return empty DataFrame
+                filtered_jackpots = pd.DataFrame()
+            
+            return filtered_jackpots
+        
+        return jackpot_df
+    
+    except Exception as e:
+        st.error(f"Error connecting to jackpot data: {e}")
+        return pd.DataFrame()  # Return empty DataFrame on errorimport streamlit as st
 import pandas as pd
 import plotly.express as px
 import gspread
