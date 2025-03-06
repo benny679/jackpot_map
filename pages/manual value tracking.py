@@ -30,6 +30,24 @@ st.set_page_config(
 # Initialize session state variables
 initialize_session_state()
 
+# Initialize additional session state variables
+if 'plot_generated' not in st.session_state:
+    st.session_state.plot_generated = False
+if 'current_plot' not in st.session_state:
+    st.session_state.current_plot = None
+if 'interactive_charts' not in st.session_state:
+    st.session_state.interactive_charts = None
+if 'plot_settings' not in st.session_state:
+    st.session_state.plot_settings = {
+        'casino': None,
+        'game': None,
+        'region': None,
+        'start_date': None,
+        'end_date': None
+    }
+if 'plot_type' not in st.session_state:
+    st.session_state.plot_type = "Matplotlib"
+
 # Function to load manual tracking data from Google Sheet
 @st.cache_data(ttl=3600)  # Cache data for 1 hour
 def load_manual_tracking_data():
@@ -200,10 +218,7 @@ def main():
         )
 
         # Store the plot type in session state
-        if 'plot_type' not in st.session_state:
-            st.session_state.plot_type = plot_type
-        else:
-            st.session_state.plot_type = plot_type
+        st.session_state.plot_type = plot_type
             
         # Date range selection
         st.sidebar.subheader("Date Range")
@@ -249,19 +264,6 @@ def main():
         # Convert to datetime
         start_datetime = pd.to_datetime(start_date)
         end_datetime = pd.to_datetime(end_date) + timedelta(days=1) - timedelta(seconds=1)  # End of day
-        
-        # Use session state to store the plot
-        if 'plot_generated' not in st.session_state:
-            st.session_state.plot_generated = False
-            st.session_state.current_plot = None
-            st.session_state.interactive_charts = None
-            st.session_state.plot_settings = {
-                'casino': None,
-                'game': None,
-                'region': None,
-                'start_date': None,
-                'end_date': None
-            }
         
         # Display the plot
         generate_plot = st.button("Generate Plot")
