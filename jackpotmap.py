@@ -537,21 +537,63 @@ class JackpotAPI:
             except (KeyError, ValueError) as e:
                 st.error(f"❌ Failed to process response data: {str(e)}")
                 return pd.DataFrame() if return_df else {}
+    
+    def get_mock_timeseries(self, jackpot_id, days=None):
+        """Generate mock data when the API is not available"""
+        st.info("Using sample data since API is not accessible")
+        
+        # Create a date range
+        end_date = pd.Timestamp.now()
+        if days:
+            start_date = end_date - pd.Timedelta(days=days)
+        else:
+            start_date = end_date - pd.Timedelta(days=30)
+        
+        # Generate dates at 15-minute intervals
+        dates = pd.date_range(start=start_date, end=end_date, freq='15min')
+        
+        # Create a base value based on jackpot ID (for consistency)
+        base_value = sum(ord(c) for c in jackpot_id) % 10000 + 5000
+        
+        # Generate values with upward trend and some randomness
+        values = [base_value]
+        for i in range(1, len(dates)):
+            # Small random increase
+            increase = np.random.normal(5, 2)
+            # Occasional large drops (simulating jackpot wins)
+            if np.random.random() < 0.01:  # 1% chance of drop
+                drop = values[-1] * np.random.uniform(0.1, 0.2)  # 10-20% drop
+                values.append(values[-1] + increase - drop)
+            else:
+                values.append(values[-1] + increase)
+        
+        # Create DataFrame
+        df = pd.DataFrame({
+            'ts': dates,
+            'amount': values
+        })
+        
+        st.success(f"✅ Generated {len(df)} mock data points")
+        return df
 
 # Function to analyze jackpot data
-def analyze_jackpot(jackpot_id: str, days: int = None, base_url: str = "https://grnst-data-store-serv.com"):
+def analyze_jackpot(jackpot_id: str, days: int = None, base_url: str = "https://grnst-data-store-serv.com", use_mock_data: bool = False):
     api = JackpotAPI(base_url=base_url)
+    
+    # Get data based on mode
+    if use_mock_data:
+        ts_data = api.get_mock_timeseries(jackpot_id, days)
+    else:
+        if not api.test_connection():
+            st.error("Failed to connect to API. Try using Sample Data mode instead.")
+            return
 
-    if not api.test_connection():
-        st.error("Failed to connect to API")
-        return
-
-    # Fetch the data
-    ts_data = api.get_timeseries(
-        jackpot_id=jackpot_id,
-        days=days,
-        return_df=True
-    )
+        # Fetch the data
+        ts_data = api.get_timeseries(
+            jackpot_id=jackpot_id,
+            days=days,
+            return_df=True
+        )
 
     if ts_data.empty:
         period = f" over the last {days} days" if days else ""
@@ -782,42 +824,47 @@ def analyze_jackpot(jackpot_id: str, days: int = None, base_url: str = "https://
         st.subheader("API Debug Information")
         st.write("This tab shows debugging information about the API connection.")
         
+        if use_mock_data:
+            st.info("Using mock data - no actual API connection was made")
+            
         st.code(f"""
         API Base URL: {base_url}
         Jackpot ID: {jackpot_id}
         Days parameter: {days}
+        Using mock data: {use_mock_data}
         Data points received: {len(ts_data)}
         Date range: {ts_data['ts'].min()} to {ts_data['ts'].max()}
         """)
         
-        if st.button("Test API Connection (Debug)"):
+        if not use_mock_data and st.button("Test API Connection (Debug)"):
             api = JackpotAPI(base_url=base_url)
             api.test_connection()
             
         # Advanced debugging - check raw requests
-        st.subheader("Request Tester")
-        custom_payload = st.text_area(
-            "Custom API Request Payload (JSON)", 
-            value=json.dumps({"jackpot_id": jackpot_id}, indent=2)
-        )
-        
-        if st.button("Send Test Request"):
-            try:
-                test_payload = json.loads(custom_payload)
-                endpoint = f"{base_url}/api/timeseries"
-                
-                with st.spinner("Sending test request..."):
-                    response = requests.post(endpoint, json=test_payload, verify=False, timeout=30)
+        if not use_mock_data:
+            st.subheader("Request Tester")
+            custom_payload = st.text_area(
+                "Custom API Request Payload (JSON)", 
+                value=json.dumps({"jackpot_id": jackpot_id}, indent=2)
+            )
+            
+            if st.button("Send Test Request"):
+                try:
+                    test_payload = json.loads(custom_payload)
+                    endpoint = f"{base_url}/api/timeseries"
                     
-                    st.text(f"Status Code: {response.status_code}")
-                    st.text(f"Response Headers: {dict(response.headers)}")
-                    
-                    try:
-                        st.json(response.json())
-                    except:
-                        st.text(f"Raw Response: {response.text}")
-            except Exception as e:
-                st.error(f"Error sending test request: {str(e)}")
+                    with st.spinner("Sending test request..."):
+                        response = requests.post(endpoint, json=test_payload, verify=False, timeout=30)
+                        
+                        st.text(f"Status Code: {response.status_code}")
+                        st.text(f"Response Headers: {dict(response.headers)}")
+                        
+                        try:
+                            st.json(response.json())
+                        except:
+                            st.text(f"Raw Response: {response.text}")
+                except Exception as e:
+                    st.error(f"Error sending test request: {str(e)}")
 
 # ---------- MAIN APP ----------
 
@@ -1133,17 +1180,31 @@ if check_password():
         # Sidebar inputs for jackpot analysis
         st.sidebar.subheader("Analysis Parameters")
         
-        # API Base URL input
-        base_url = st.sidebar.text_input(
-            "API Base URL",
-            value="https://grnst-data-store-serv.com",
-            help="The base URL for the jackpot API"
+        # Data source selection
+        api_mode = st.sidebar.radio(
+            "Data Source",
+            ["Live API", "Sample Data"],
+            index=1,  # Default to Sample Data
+            help="Use Sample Data if the API is not accessible"
         )
         
-        # Test connection button
-        if st.sidebar.button("Test API Connection"):
-            api = JackpotAPI(base_url=base_url)
-            api.test_connection()
+        use_mock_data = (api_mode == "Sample Data")
+        
+        # API settings (only shown when using Live API)
+        if not use_mock_data:
+            # API Base URL input
+            base_url = st.sidebar.text_input(
+                "API Base URL",
+                value="https://grnst-data-store-serv.com",
+                help="The base URL for the jackpot API"
+            )
+            
+            # Test connection button
+            if st.sidebar.button("Test API Connection"):
+                api = JackpotAPI(base_url=base_url)
+                api.test_connection()
+        else:
+            base_url = "https://grnst-data-store-serv.com"  # Dummy URL when using mock data
 
         # Jackpot ID input
         jackpot_id = st.sidebar.text_input(
@@ -1167,7 +1228,7 @@ if check_password():
         # Run analysis button
         if st.sidebar.button("Run Analysis"):
             if jackpot_id:
-                analyze_jackpot(jackpot_id, days, base_url)
+                analyze_jackpot(jackpot_id, days, base_url, use_mock_data)
             else:
                 st.error("Please enter a valid Jackpot ID")
         
@@ -1179,17 +1240,17 @@ if check_password():
         
         with col1:
             if st.button("Ave Caesar"):
-                analyze_jackpot("feeds-jackpots.s3.amazonaws.com_Ave Caesar_LEAVECAESAR", days, base_url)
+                analyze_jackpot("feeds-jackpots.s3.amazonaws.com_Ave Caesar_LEAVECAESAR", days, base_url, use_mock_data)
                 
             if st.button("Red Tiger Mega Jackpot"):
-                analyze_jackpot("feed-skillonnet.redtiger.cash_skillOnNet-Mega Jackpot_38002", days, base_url)
+                analyze_jackpot("feed-skillonnet.redtiger.cash_skillOnNet-Mega Jackpot_38002", days, base_url, use_mock_data)
                 
         with col2:
             if st.button("Daily Drop Jackpot"):
-                analyze_jackpot("feed-skillonnet.redtiger.cash_skillOnNet-Daily Drop_46712", days, base_url)
+                analyze_jackpot("feed-skillonnet.redtiger.cash_skillOnNet-Daily Drop_46712", days, base_url, use_mock_data)
                 
             if st.button("Progressive Jackpot"): 
-                analyze_jackpot("feed-operator.provider.jackpot_example_12345", days, base_url)
+                analyze_jackpot("feed-operator.provider.jackpot_example_12345", days, base_url, use_mock_data)
 
     # Footer with information
     st.markdown("---")
