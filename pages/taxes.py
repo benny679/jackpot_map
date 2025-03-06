@@ -468,7 +468,7 @@ country_details = st.empty()
 # Initialize the selected country from URL parameters or click events
 if "selected_country" not in st.session_state:
     # Check URL parameters first
-    params = st.experimental_get_query_params()
+    params = st.query_params()
     if "country" in params:
         st.session_state.selected_country = params["country"][0]
     else:
