@@ -23,85 +23,94 @@ def load_data():
         sheet = gc.open("Research - Summary")  # Open by exact name
         worksheet = sheet.worksheet("Tax")  # Use the Tax worksheet
         
-        # Get all values from the worksheet
+        # Get all values as CSV
+        url = f"https://docs.google.com/spreadsheets/d/{sheet.id}/export?format=csv&gid={worksheet.id}"
+        
+        # Alternative approach: direct CSV download
+        st.write("Attempting direct CSV download from your Google Sheet...")
+        
+        # Use raw requests to download the CSV
+        import requests
+        headers = {
+            'Authorization': f'Bearer {credentials.token}',
+        }
+        
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            import io
+            # Use pandas to read the CSV directly
+            df = pd.read_csv(io.StringIO(response.text))
+            st.write("CSV download successful!")
+            st.write("Found columns:", df.columns.tolist())
+            
+            # Clean column names (strip whitespace, special chars)
+            df.columns = [str(col).strip() for col in df.columns]
+            
+            # Check for required columns
+            required_cols = ["Country_region", "Market_region"]
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            
+            if missing_cols:
+                st.warning(f"Missing required columns: {missing_cols}")
+                
+                # Manual column selection
+                st.write("Please select which columns to use for country and region:")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    country_col = st.selectbox(
+                        "Select column for Country:",
+                        options=df.columns,
+                        index=0
+                    )
+                    
+                    # Create Country_region if missing
+                    if "Country_region" not in df.columns:
+                        df["Country_region"] = df[country_col]
+                
+                with col2:
+                    region_options = [col for col in df.columns if col != country_col]
+                    region_col = st.selectbox(
+                        "Select column for Region:",
+                        options=region_options,
+                        index=0
+                    )
+                    
+                    # Create Market_region if missing
+                    if "Market_region" not in df.columns:
+                        df["Market_region"] = df[region_col]
+            
+            # Convert likely numeric columns
+            for col in df.columns:
+                # Check if column name suggests it's numeric
+                if any(term in col.lower() for term in ["tax", "cagr", "rate", "%", "accounts"]):
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            return df
+        else:
+            st.error(f"Failed to download CSV: {response.status_code} {response.reason}")
+            raise Exception(f"CSV download failed: {response.status_code}")
+            
+        # Fallback to traditional approach if needed
+        st.write("Couldn't download as CSV, trying alternative method...")        
         all_values = worksheet.get_all_values()
-        if not all_values:
-            st.error("Worksheet is empty")
-            return pd.DataFrame()
-            
-        # Examine the first few rows to find the actual header row
-        st.write("First rows of data:", all_values[:5])
         
-        # Let the user select which row contains the real headers
-        header_row = st.selectbox(
-            "Select which row contains the column headers:",
-            options=list(range(min(5, len(all_values)))),
-            format_func=lambda x: f"Row {x+1}: {all_values[x][:3]}..."
-        )
+        # Ask user to input expected header information
+        st.write("Please enter your expected headers (comma separated):")
+        header_input = st.text_input("Headers", "Country_region,Market_region,Legality/Regulation,Tax (iGaming),Regulated,Operator_tax")
+        expected_headers = [h.strip() for h in header_input.split(",")]
         
-        # Get complete headers from the selected row
-        headers = all_values[header_row]
-        st.write("Selected headers:", headers)
+        # Create a DataFrame with expected headers
+        data_rows = all_values[1:]  # Skip the header row
+        df = pd.DataFrame(data_rows)
         
-        # Get the data rows (everything after the header row)
-        data_rows = all_values[header_row+1:]
-        
-        # Clean up headers - replace empty strings with column indices
-        cleaned_headers = []
-        for i, header in enumerate(headers):
-            if header.strip() == "":
-                cleaned_headers.append(f"Column_{i}")
-            else:
-                cleaned_headers.append(header.strip())
-        
-        # Check for duplicate headers after cleaning
-        if len(cleaned_headers) != len(set(cleaned_headers)):
-            st.warning("Duplicate column headers detected. Renaming duplicates.")
-            seen = {}
-            unique_headers = []
-            for h in cleaned_headers:
-                if h in seen:
-                    unique_headers.append(f"{h}_{seen[h]}")
-                    seen[h] += 1
-                else:
-                    unique_headers.append(h)
-                    seen[h] = 1
-            cleaned_headers = unique_headers
-        
-        # Create DataFrame
-        df = pd.DataFrame(data_rows, columns=cleaned_headers)
-        
-        # Identify key columns for mapping
-        st.write("Available columns:", cleaned_headers)
-        
-        # Let user select which columns to use for key fields
-        col1, col2 = st.columns(2)
-        with col1:
-            country_col = st.selectbox(
-                "Select the column that contains country names:",
-                options=cleaned_headers,
-                index=0
-            )
-        
-        with col2:
-            region_col = st.selectbox(
-                "Select the column that contains region information:",
-                options=cleaned_headers,
-                index=min(1, len(cleaned_headers)-1)
-            )
-        
-        # Map selected columns to standard names
-        df = df.rename(columns={
-            country_col: "Country_region",
-            region_col: "Market_region"
-        })
-        
-        # Convert numeric columns - try to identify tax columns
-        tax_cols = [col for col in df.columns if "tax" in col.lower() or "iGaming" in col]
-        for col in tax_cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-        st.write("Final columns:", list(df.columns))
+        # Assign custom headers
+        if len(df.columns) >= len(expected_headers):
+            # Assign the provided headers to the first columns
+            df.columns = expected_headers + [f"Column_{i}" for i in range(len(expected_headers), len(df.columns))]
+        else:
+            # If there are more headers than columns, use what fits
+            df.columns = expected_headers[:len(df.columns)]
         
         return df
     
