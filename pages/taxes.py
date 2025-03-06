@@ -1,11 +1,10 @@
-
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 import gspread
 from google.oauth2 import service_account
-import streamlit as st
 
-# Add this at the beginning of your script, after the imports
+# Function to connect to jackpot data and get jackpots for a specific country
 def connect_to_jackpots(country=None):
     """
     Function to connect to jackpot data and get jackpots for a specific country.
@@ -57,7 +56,7 @@ def connect_to_jackpots(country=None):
     
     except Exception as e:
         st.error(f"Error connecting to jackpot data: {e}")
-        return pd.DataFrame()  # Return empty DataFrame on errorimport streamlit as st
+        return pd.DataFrame()  # Return empty DataFrame on error
 
 # Function to load data from Google Sheet
 @st.cache_data(ttl=600)  # Cache data for 10 minutes
@@ -321,51 +320,6 @@ with tab1:
         """, unsafe_allow_html=True)
         
         st.write("👆 Click on any country to see detailed information")
-        
-        # Filter for specific gaming types
-        gaming_types = [col for col in ["Casino", "iGaming", "Betting", "iBetting"] if col in filtered_df.columns]
-        if gaming_types:
-            selected_gaming_type = st.selectbox("View regulation status for specific type:", gaming_types)
-            
-            # Create a map for the selected gaming type
-            fig_gaming = px.choropleth(
-                filtered_df,
-                locations="Country_region",
-                locationmode="country names",
-                color=selected_gaming_type,  # Color by selected gaming type status
-                hover_name="Country_region",
-                hover_data=[col for col in ["Market_region", "Regulation_type", selected_gaming_type] if col in filtered_df.columns],
-                color_discrete_sequence=px.colors.qualitative.Safe,
-                title=f"{selected_gaming_type} Regulation Status by Country"
-            )
-            
-            fig_gaming.update_layout(
-                height=500,
-                margin={"r": 0, "t": 30, "l": 0, "b": 0},
-            )
-            
-            st.plotly_chart(fig_gaming, use_container_width=True)
-            # Alternative coloring by Legality/Regulation
-            fig = px.choropleth(
-                filtered_df,
-                locations="Country_region",
-                locationmode="country names",
-                color="Legality/Regulation",
-                hover_name="Country_region",
-                hover_data=[col for col in ["Market_region", "Regulation_type", "Offshore?", "Casino", "iGaming", "Betting", "iBetting"] if col in filtered_df.columns],
-                color_discrete_sequence=px.colors.qualitative.Safe,
-                title="iGaming Regulation Status by Country"
-            )
-            
-            fig.update_layout(
-                height=600,
-                margin={"r": 0, "t": 30, "l": 0, "b": 0},
-            )
-            
-            # Display map
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning("No regulation status column found in the dataset")
         
         # Filter for specific gaming types
         gaming_types = [col for col in ["Casino", "iGaming", "Betting", "iBetting"] if col in filtered_df.columns]
@@ -747,6 +701,13 @@ if st.session_state.selected_country:
                                 var_name='Entity', 
                                 value_name='Tax Rate (%)'
                             )
+                            
+                            fig = px.bar(
+                                plot_df, 
+                                x='Metric', 
+                                y='Tax Rate (%)', 
+                                color='Entity',
+                                barmode='group',
                             
                             fig = px.bar(
                                 plot_df, 
