@@ -264,8 +264,21 @@ def logout():
     if "username" in st.session_state and "ip_address" in st.session_state:
         log_ip_activity(st.session_state["username"], "logout", st.session_state["ip_address"])
 
+    # Instead of calling st.rerun() directly, set a flag in session state
     st.session_state["authenticated"] = False
     st.session_state["username"] = None
     st.session_state["user_role"] = None
     st.session_state["ip_address"] = None
-    st.rerun()
+    st.session_state["logout_requested"] = True  # Add this flag
+
+# In your main app code, check for the logout flag
+def check_logout_flag():
+    """Check if logout was requested and perform rerun if needed"""
+    if st.session_state.get("logout_requested", False):
+        st.session_state["logout_requested"] = False  # Reset the flag
+        st.rerun()  # This will work because it's not in a callback context
+
+# Add this check early in your app's flow, not in a callback
+# For example, in your main app file after initializing session state:
+initialize_session_state()
+check_logout_flag()  # Add this line to check for logout requests
