@@ -446,7 +446,7 @@ def load_sheet_data():
         # Convert appropriate columns to numeric
         numeric_cols = df.columns[df.columns.str.contains('Amount|Level|Value|%|ID', case=False)]
         for col in numeric_cols:
-            df[col] = pd.to_numeric(df[col], errors='ignore')
+            df[col] = pd.to_numeric(df[col])  # Remove errors='ignore'
 
         return df
     except Exception as e:
@@ -464,11 +464,13 @@ class JackpotAPI:
         try:
             with st.spinner("Testing API connection..."):
                 response = self.session.get(self.base_url)
+                response_text = response.text[:100]  # Get just the first 100 chars to avoid overly long output
+                st.write(f"API Response: {response_text}...")
                 response.raise_for_status()
-                st.success("API connection test successful")
+                st.success("✅ API connection successful")
                 return True
         except requests.exceptions.RequestException as e:
-            st.error(f"API connection test failed: {str(e)}")
+            st.error(f"❌ API connection failed: {str(e)}")
             return False
 
     def get_timeseries(
@@ -477,49 +479,68 @@ class JackpotAPI:
         days: int = None,
         return_df: bool = True
     ):
-        """
-        Fetch jackpot timeseries data.
-        """
+        """Fetch jackpot timeseries data"""
         endpoint = f"{self.base_url}/api/timeseries"
+        
+        # First try without timespan
         payload = {"jackpot_id": jackpot_id}
         
         with st.spinner(f"Fetching data for jackpot {jackpot_id}..."):
-            st.info("Trying request without timespan first...")
+            # Show request details in the UI
+            st.text(f"Request URL: {endpoint}")
+            st.text(f"Request payload: {json.dumps(payload, indent=2)}")
+            
             try:
-                response = self.session.post(endpoint, json=payload)
+                response = self.session.post(endpoint, json=payload, timeout=30)
+                st.text(f"Response status code: {response.status_code}")
+                
+                # Check if we got a successful response
                 response.raise_for_status()
                 data = response.json()
-
+                
+                # Show a preview of the response
+                st.text(f"Response preview: {str(data)[:200]}...")
+                
                 # If we got no data and days parameter was provided, try with timespan
                 if len(data.get("timeseriesData", [])) == 0 and days is not None:
-                    st.info(f"No data received, trying with {days} days timespan...")
+                    st.info(f"No data received without timespan, trying with {days} days timespan...")
                     timespan_ms = days * 24 * 60 * 60 * 1000
                     payload["timespan"] = timespan_ms
-
-                    response = self.session.post(endpoint, json=payload)
+                    
+                    st.text(f"New request payload: {json.dumps(payload, indent=2)}")
+                    response = self.session.post(endpoint, json=payload, timeout=30)
+                    st.text(f"Response status code: {response.status_code}")
+                    
                     response.raise_for_status()
                     data = response.json()
-
+                
                 if return_df:
                     df = pd.DataFrame(data.get("timeseriesData", []), columns=['ts', 'amount'])
                     if not df.empty:
                         # Ensure amount is numeric
                         df['amount'] = pd.to_numeric(df['amount'])
                         df['ts'] = pd.to_datetime(df['ts'], unit='ms')
-                        st.success(f"Successfully fetched {len(df)} data points")
+                        st.success(f"✅ Successfully fetched {len(df)} data points")
+                        st.text("DataFrame sample:")
+                        st.write(df.head())
+                    else:
+                        st.warning("Received response, but no data points were found.")
                     return df
                 return data
-
+                
             except requests.exceptions.RequestException as e:
-                st.error(f"Failed to fetch timeseries data: {str(e)}")
+                st.error(f"❌ API request failed: {str(e)}")
+                if hasattr(e, 'response') and e.response is not None:
+                    st.error(f"Response content: {e.response.text}")
                 return pd.DataFrame() if return_df else {}
+                
             except (KeyError, ValueError) as e:
-                st.error(f"Failed to process timeseries data: {str(e)}")
+                st.error(f"❌ Failed to process response data: {str(e)}")
                 return pd.DataFrame() if return_df else {}
 
 # Function to analyze jackpot data
-def analyze_jackpot(jackpot_id: str, days: int = None):
-    api = JackpotAPI()
+def analyze_jackpot(jackpot_id: str, days: int = None, base_url: str = "https://grnst-data-store-serv.com"):
+    api = JackpotAPI(base_url=base_url)
 
     if not api.test_connection():
         st.error("Failed to connect to API")
@@ -545,15 +566,15 @@ def analyze_jackpot(jackpot_id: str, days: int = None):
     st.subheader("Jackpot Analysis Visualizations")
     
     # filter for specific start date if data goes back far enough
-    min_date = ts_data['ts'].min().date()
-    max_date = ts_data['ts'].max().date()
+    oldest_date = ts_data['ts'].min().date()
+    newest_date = ts_data['ts'].max().date()
     
     # Date range selector
     date_range = st.date_input(
         "Select date range for analysis",
-        value=[min_date, max_date],
-        min_value=min_date,
-        max_value=max_date
+        value=[oldest_date, newest_date],
+        min_value=oldest_date,
+        max_value=newest_date
     )
     
     if len(date_range) == 2:
@@ -595,11 +616,12 @@ def analyze_jackpot(jackpot_id: str, days: int = None):
     average_drop = significant_drops['previous_amount'].mean()
     
     # Create tabs for different visualizations
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "Jackpot Over Time", 
         "Significant Drops Histogram", 
         "Probability Plot",
-        "Cumulative Drops"
+        "Cumulative Drops", 
+        "Debug"
     ])
     
     with tab1:
@@ -755,6 +777,47 @@ def analyze_jackpot(jackpot_id: str, days: int = None):
             f"{growth:.2f}",
             delta=f"{(growth/start_value*100):.2f}%" if start_value else "N/A"
         )
+    
+    with tab5:
+        st.subheader("API Debug Information")
+        st.write("This tab shows debugging information about the API connection.")
+        
+        st.code(f"""
+        API Base URL: {base_url}
+        Jackpot ID: {jackpot_id}
+        Days parameter: {days}
+        Data points received: {len(ts_data)}
+        Date range: {ts_data['ts'].min()} to {ts_data['ts'].max()}
+        """)
+        
+        if st.button("Test API Connection (Debug)"):
+            api = JackpotAPI(base_url=base_url)
+            api.test_connection()
+            
+        # Advanced debugging - check raw requests
+        st.subheader("Request Tester")
+        custom_payload = st.text_area(
+            "Custom API Request Payload (JSON)", 
+            value=json.dumps({"jackpot_id": jackpot_id}, indent=2)
+        )
+        
+        if st.button("Send Test Request"):
+            try:
+                test_payload = json.loads(custom_payload)
+                endpoint = f"{base_url}/api/timeseries"
+                
+                with st.spinner("Sending test request..."):
+                    response = requests.post(endpoint, json=test_payload, verify=False, timeout=30)
+                    
+                    st.text(f"Status Code: {response.status_code}")
+                    st.text(f"Response Headers: {dict(response.headers)}")
+                    
+                    try:
+                        st.json(response.json())
+                    except:
+                        st.text(f"Raw Response: {response.text}")
+            except Exception as e:
+                st.error(f"Error sending test request: {str(e)}")
 
 # ---------- MAIN APP ----------
 
@@ -1069,11 +1132,23 @@ if check_password():
             
         # Sidebar inputs for jackpot analysis
         st.sidebar.subheader("Analysis Parameters")
+        
+        # API Base URL input
+        base_url = st.sidebar.text_input(
+            "API Base URL",
+            value="https://grnst-data-store-serv.com",
+            help="The base URL for the jackpot API"
+        )
+        
+        # Test connection button
+        if st.sidebar.button("Test API Connection"):
+            api = JackpotAPI(base_url=base_url)
+            api.test_connection()
 
         # Jackpot ID input
         jackpot_id = st.sidebar.text_input(
             "Jackpot ID",
-            value="feed-skillonnet.redtiger.cash_skillOnNet-Mega Jackpot_38002",
+            value="feeds-jackpots.s3.amazonaws.com_Ave Caesar_LEAVECAESAR",
             help="Enter the unique identifier for the jackpot"
         )
 
@@ -1092,7 +1167,7 @@ if check_password():
         # Run analysis button
         if st.sidebar.button("Run Analysis"):
             if jackpot_id:
-                analyze_jackpot(jackpot_id, days)
+                analyze_jackpot(jackpot_id, days, base_url)
             else:
                 st.error("Please enter a valid Jackpot ID")
         
@@ -1103,18 +1178,18 @@ if check_password():
         col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("Red Tiger Mega Jackpot"):
-                analyze_jackpot("feed-skillonnet.redtiger.cash_skillOnNet-Mega Jackpot_38002", days)
+            if st.button("Ave Caesar"):
+                analyze_jackpot("feeds-jackpots.s3.amazonaws.com_Ave Caesar_LEAVECAESAR", days, base_url)
                 
-            if st.button("Daily Drop Jackpot"):
-                analyze_jackpot("feed-skillonnet.redtiger.cash_skillOnNet-Daily Drop_46712", days)
+            if st.button("Red Tiger Mega Jackpot"):
+                analyze_jackpot("feed-skillonnet.redtiger.cash_skillOnNet-Mega Jackpot_38002", days, base_url)
                 
         with col2:
-            if st.button("Hourly Drop Jackpot"):
-                analyze_jackpot("feed-skillonnet.redtiger.cash_skillOnNet-Hourly Drop_52398", days)
+            if st.button("Daily Drop Jackpot"):
+                analyze_jackpot("feed-skillonnet.redtiger.cash_skillOnNet-Daily Drop_46712", days, base_url)
                 
-            if st.button("Progressive Jackpot"):
-                analyze_jackpot("feed-operator.provider.jackpot_example_12345", days)
+            if st.button("Progressive Jackpot"): 
+                analyze_jackpot("feed-operator.provider.jackpot_example_12345", days, base_url)
 
     # Footer with information
     st.markdown("---")
