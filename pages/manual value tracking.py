@@ -1,4 +1,5 @@
-import streamlit as st
+# Date range selection
+st.sidebar.subheader("Date Range")import streamlit as st
 import pandas as pd
 import numpy as np
 import gspread
@@ -92,8 +93,8 @@ def load_manual_tracking_data():
         return pd.DataFrame()
 
 # Function to create a plot of level data
-def create_level_plot(df, casino, game, region, start_date, end_date):
-    """Create a plot of level data over time."""
+def create_level_plot(df, casino, game, region, start_date, end_date, plot_type="Matplotlib"):
+    """Create a plot of level data over time using the specified plotting library."""
     # Filter data based on selection
     filtered_df = df[
         (df["Casino"] == casino) &
@@ -114,6 +115,28 @@ def create_level_plot(df, casino, game, region, start_date, end_date):
     if num_levels == 0:
         st.warning("No level data found for the selected criteria.")
         return None
+        
+    # Set datetime as index for proper time-series plotting
+    plot_df = filtered_df.set_index("DateTime").copy()
+    
+    # For Streamlit Native charts, we'll return the dataframe
+    if plot_type == "Streamlit Native":
+        return plot_df[level_columns]
+    
+    # Create plot based on selected type
+    if plot_type == "Matplotlib":
+        return create_matplotlib_plot(plot_df, level_columns, casino, game, region)
+    elif plot_type == "Plotly":
+        return create_plotly_plot(plot_df, level_columns, casino, game, region)
+    elif plot_type == "Altair":
+        return create_altair_plot(plot_df, level_columns, casino, game, region)
+    else:
+        # Default to Matplotlib if type not recognized
+        return create_matplotlib_plot(plot_df, level_columns, casino, game, region)
+
+def create_matplotlib_plot(plot_df, level_columns, casino, game, region):
+    """Create a Matplotlib plot of level data."""
+    num_levels = len(level_columns)
     
     # Set up the figure
     cols = min(2, num_levels)  # Maximum 2 columns
@@ -130,9 +153,6 @@ def create_level_plot(df, casino, game, region, start_date, end_date):
     # Plot each level
     for i, level in enumerate(level_columns):
         row, col = divmod(i, cols)
-        
-        # Set datetime as index for proper time-series plotting
-        plot_df = filtered_df.set_index("DateTime").copy()
         
         # Handle case where axs is a single subplot
         ax = axs[row, col] if num_levels > 1 or (rows == 1 and cols > 1) else axs
@@ -153,6 +173,87 @@ def create_level_plot(df, casino, game, region, start_date, end_date):
     
     plt.tight_layout()
     return fig
+
+def create_plotly_plot(plot_df, level_columns, casino, game, region):
+    """Create a Plotly plot of level data."""
+    num_levels = len(level_columns)
+    
+    # Set up the figure
+    cols = min(2, num_levels)  # Maximum 2 columns
+    rows = (num_levels + cols - 1) // cols
+    
+    # Create subplots
+    fig = make_subplots(rows=rows, cols=cols, subplot_titles=[f"{casino} - {game} - {level}" for level in level_columns])
+    
+    # Plot each level
+    for i, level in enumerate(level_columns):
+        row, col = divmod(i, cols)
+        row += 1  # Plotly is 1-indexed
+        col += 1  # Plotly is 1-indexed
+        
+        fig.add_trace(
+            go.Scatter(
+                x=plot_df.index,
+                y=plot_df[level],
+                mode='lines+markers',
+                name=level,
+                line=dict(width=2),
+                marker=dict(size=8)
+            ),
+            row=row, col=col
+        )
+        
+        fig.update_xaxes(title_text="Date", row=row, col=col)
+        fig.update_yaxes(title_text="Value", row=row, col=col)
+    
+    # Update layout
+    fig.update_layout(
+        height=300 * rows,
+        width=1200,
+        showlegend=True,
+        title_text=f"{casino} - {game} - {region} Levels",
+        title_x=0.5,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    
+    return fig
+
+def create_altair_plot(plot_df, level_columns, casino, game, region):
+    """Create Altair plots of level data."""
+    # Reset index to have DateTime as a column
+    plot_df = plot_df.reset_index()
+    
+    # Create a list to hold individual charts
+    charts = []
+    
+    # For each level, create a chart
+    for level in level_columns:
+        chart = alt.Chart(plot_df).mark_line(point=True).encode(
+            x=alt.X('DateTime:T', title='Date'),
+            y=alt.Y(f'{level}:Q', title='Value'),
+            tooltip=[
+                alt.Tooltip('DateTime:T', title='Date'),
+                alt.Tooltip(f'{level}:Q', title='Value')
+            ]
+        ).properties(
+            title=f"{casino} - {game} - {level}",
+            width=500,
+            height=300
+        ).interactive()
+        
+        charts.append(chart)
+    
+    # Combine charts into a vertical layout
+    combined_chart = alt.vconcat(*charts).resolve_scale(
+        x='shared'
+    ).properties(
+        title=alt.TitleParams(
+            text=f"{casino} - {game} - {region} Levels",
+            fontSize=20
+        )
+    )
+    
+    return combined_chart
 
 # Main app code
 def main():
@@ -265,17 +366,29 @@ def main():
                 selected_game, 
                 selected_region, 
                 start_datetime, 
-                end_datetime
+                end_datetime,
+                st.session_state.plot_type
             )
             st.session_state.plot_generated = True
         
         # Display plot if available
         if st.session_state.plot_generated and st.session_state.current_plot:
             st.subheader(f"Level Values for {st.session_state.plot_settings['casino']} - {st.session_state.plot_settings['game']} - {st.session_state.plot_settings['region']}")
-            st.pyplot(st.session_state.current_plot)
+            # Display plot based on type
+            if st.session_state.plot_type == "Matplotlib":
+                st.pyplot(st.session_state.current_plot)
+            elif st.session_state.plot_type == "Plotly":
+                st.plotly_chart(st.session_state.current_plot, use_container_width=True)
+            elif st.session_state.plot_type == "Altair":
+                st.altair_chart(st.session_state.current_plot, use_container_width=True)
+            elif st.session_state.plot_type == "Streamlit Native":
+                # For native charts, current_plot is the dataframe
+                st.line_chart(st.session_state.current_plot)
+            else:
+                st.pyplot(st.session_state.current_plot)
                 
                 # Option to upload to Slack
-            st.subheader("Share Plot")
+                st.subheader("Share Plot")
                 
                 # Add debug button
                 if st.checkbox("Debug Slack Settings"):
