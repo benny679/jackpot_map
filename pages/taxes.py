@@ -23,94 +23,44 @@ def load_data():
         sheet = gc.open("Research - Summary")  # Open by exact name
         worksheet = sheet.worksheet("Tax")  # Use the Tax worksheet
         
-        # Get all values as CSV
-        url = f"https://docs.google.com/spreadsheets/d/{sheet.id}/export?format=csv&gid={worksheet.id}"
+        st.info("Connected to Google Sheet. Trying to process the data...")
         
-        # Alternative approach: direct CSV download
-        st.write("Attempting direct CSV download from your Google Sheet...")
+        # Get all data using get_all_records with explicit expected headers
+        expected_headers = [
+            "Country_region", "Market_region", "GGR CAGR", "Regulated", 
+            "Regulation_type", "Offshore?", "Residents?", "Casino", 
+            "iGaming", "Betting", "iBetting", "Operator_tax", 
+            "Player_tax", "Accounts_#", "Stake_limit", "Deposit_limit", 
+            "Withdrawal_limit", "Priority region", "Triggering reviews", "Notes", 
+            "Legality/Regulation", "Tax (iGaming)", "Responsible Gambling (iGaming)"
+        ]
         
-        # Use raw requests to download the CSV
-        import requests
-        headers = {
-            'Authorization': f'Bearer {credentials.token}',
-        }
+        try:
+            # Try with explicit headers
+            data = worksheet.get_all_records(expected_headers=expected_headers)
+            df = pd.DataFrame(data)
+            st.success("Successfully loaded data with expected headers!")
+        except Exception as e:
+            st.warning(f"Couldn't load with expected headers: {e}")
+            
+            # Fallback: Get all values and use first row as headers
+            all_values = worksheet.get_all_values()
+            headers = all_values[0]
+            data_values = all_values[1:]
+            
+            # Create DataFrame
+            df = pd.DataFrame(data_values, columns=headers)
+            
+            # Check if we have Country_region and Market_region columns
+            if "Country_region" not in df.columns or "Market_region" not in df.columns:
+                st.error("Critical columns missing from data. Please check your Google Sheet.")
+                st.write("Available columns:", df.columns.tolist())
         
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            import io
-            # Use pandas to read the CSV directly
-            df = pd.read_csv(io.StringIO(response.text))
-            st.write("CSV download successful!")
-            st.write("Found columns:", df.columns.tolist())
-            
-            # Clean column names (strip whitespace, special chars)
-            df.columns = [str(col).strip() for col in df.columns]
-            
-            # Check for required columns
-            required_cols = ["Country_region", "Market_region"]
-            missing_cols = [col for col in required_cols if col not in df.columns]
-            
-            if missing_cols:
-                st.warning(f"Missing required columns: {missing_cols}")
-                
-                # Manual column selection
-                st.write("Please select which columns to use for country and region:")
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    country_col = st.selectbox(
-                        "Select column for Country:",
-                        options=df.columns,
-                        index=0
-                    )
-                    
-                    # Create Country_region if missing
-                    if "Country_region" not in df.columns:
-                        df["Country_region"] = df[country_col]
-                
-                with col2:
-                    region_options = [col for col in df.columns if col != country_col]
-                    region_col = st.selectbox(
-                        "Select column for Region:",
-                        options=region_options,
-                        index=0
-                    )
-                    
-                    # Create Market_region if missing
-                    if "Market_region" not in df.columns:
-                        df["Market_region"] = df[region_col]
-            
-            # Convert likely numeric columns
-            for col in df.columns:
-                # Check if column name suggests it's numeric
-                if any(term in col.lower() for term in ["tax", "cagr", "rate", "%", "accounts"]):
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-            return df
-        else:
-            st.error(f"Failed to download CSV: {response.status_code} {response.reason}")
-            raise Exception(f"CSV download failed: {response.status_code}")
-            
-        # Fallback to traditional approach if needed
-        st.write("Couldn't download as CSV, trying alternative method...")        
-        all_values = worksheet.get_all_values()
-        
-        # Ask user to input expected header information
-        st.write("Please enter your expected headers (comma separated):")
-        header_input = st.text_input("Headers", "Country_region,Market_region,Legality/Regulation,Tax (iGaming),Regulated,Operator_tax")
-        expected_headers = [h.strip() for h in header_input.split(",")]
-        
-        # Create a DataFrame with expected headers
-        data_rows = all_values[1:]  # Skip the header row
-        df = pd.DataFrame(data_rows)
-        
-        # Assign custom headers
-        if len(df.columns) >= len(expected_headers):
-            # Assign the provided headers to the first columns
-            df.columns = expected_headers + [f"Column_{i}" for i in range(len(expected_headers), len(df.columns))]
-        else:
-            # If there are more headers than columns, use what fits
-            df.columns = expected_headers[:len(df.columns)]
+        # Convert numeric columns
+        numeric_cols = ["GGR CAGR", "Operator_tax", "Player_tax", "Accounts_#", "Tax (iGaming)"]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
         
         return df
     
@@ -172,67 +122,99 @@ tab1, tab2, tab3, tab4 = st.tabs(["Regulation Map", "Tax Map", "Responsible Gamb
 with tab1:
     st.header("iGaming Regulation by Country")
     
-    # Color coding for regulation status
-    if 'Regulated' in df.columns:
-        fig = px.choropleth(
-            filtered_df,
-            locations="Country_region",  # Column containing country names
-            locationmode="country names",  # Use country names (alternative is ISO codes)
-            color="Regulated",  # Color by regulation status
-            hover_name="Country_region",
-            hover_data=["Market_region", "Regulation_type", "Offshore?", "Casino", "iGaming", "Betting", "iBetting"],
-            color_discrete_map={
-                "Yes": "#2E8B57",       # Green for fully regulated
-                "Partially": "#FFA500",  # Orange for partially regulated
-                "No": "#B22222"         # Red for not regulated
-            },
-            title="iGaming Regulation Status by Country"
-        )
+    # Safety check for required columns
+    if 'Country_region' not in filtered_df.columns:
+        st.error("Country_region column not found in dataset")
+    elif filtered_df.empty:
+        st.warning("No data available with current filters")
     else:
-        # Alternative coloring by Legality/Regulation
-        fig = px.choropleth(
-            filtered_df,
-            locations="Country_region",
-            locationmode="country names",
-            color="Legality/Regulation",
-            hover_name="Country_region",
-            hover_data=["Market_region", "Regulation_type", "Offshore?", "Casino", "iGaming", "Betting", "iBetting"],
-            color_discrete_sequence=px.colors.qualitative.Safe,
-            title="iGaming Regulation Status by Country"
-        )
-    
-    fig.update_layout(
-        height=600,
-        margin={"r": 0, "t": 30, "l": 0, "b": 0},
-    )
-    
-    # Display map
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Filter for specific gaming types
-    gaming_types = ["Casino", "iGaming", "Betting", "iBetting"]
-    gaming_types = [g for g in gaming_types if g in df.columns]
-    if gaming_types:
-        selected_gaming_type = st.selectbox("View regulation status for specific type:", gaming_types)
+        # Color coding for regulation status
+        if 'Regulated' in filtered_df.columns:
+            # Create color map based on unique values
+            regulated_values = filtered_df['Regulated'].unique().tolist()
+            if len(regulated_values) > 0:
+                st.write("Regulation status values:", regulated_values)
+                
+                # Create appropriate color mapping
+                color_map = {}
+                for val in regulated_values:
+                    if isinstance(val, str):
+                        lower_val = val.lower()
+                        if "yes" in lower_val or "full" in lower_val:
+                            color_map[val] = "#2E8B57"  # Green
+                        elif "partial" in lower_val or "limited" in lower_val:
+                            color_map[val] = "#FFA500"  # Orange
+                        elif "no" in lower_val or "not" in lower_val or "illegal" in lower_val:
+                            color_map[val] = "#B22222"  # Red
+                        else:
+                            color_map[val] = "#808080"  # Gray for unknown
+                
+                fig = px.choropleth(
+                    filtered_df,
+                    locations="Country_region",  # Column containing country names
+                    locationmode="country names",  # Use country names (alternative is ISO codes)
+                    color="Regulated",  # Color by regulation status
+                    hover_name="Country_region",
+                    hover_data=[col for col in ["Market_region", "Regulation_type", "Offshore?", "Casino", "iGaming", "Betting", "iBetting"] if col in filtered_df.columns],
+                    color_discrete_map=color_map,
+                    title="iGaming Regulation Status by Country"
+                )
+                
+                fig.update_layout(
+                    height=600,
+                    margin={"r": 0, "t": 30, "l": 0, "b": 0},
+                )
+                
+                # Display map
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("No regulation status data available")
+        elif 'Legality/Regulation' in filtered_df.columns:
+            # Alternative coloring by Legality/Regulation
+            fig = px.choropleth(
+                filtered_df,
+                locations="Country_region",
+                locationmode="country names",
+                color="Legality/Regulation",
+                hover_name="Country_region",
+                hover_data=[col for col in ["Market_region", "Regulation_type", "Offshore?", "Casino", "iGaming", "Betting", "iBetting"] if col in filtered_df.columns],
+                color_discrete_sequence=px.colors.qualitative.Safe,
+                title="iGaming Regulation Status by Country"
+            )
+            
+            fig.update_layout(
+                height=600,
+                margin={"r": 0, "t": 30, "l": 0, "b": 0},
+            )
+            
+            # Display map
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("No regulation status column found in the dataset")
         
-        # Create a map for the selected gaming type
-        fig_gaming = px.choropleth(
-            filtered_df,
-            locations="Country_region",
-            locationmode="country names",
-            color=selected_gaming_type,  # Color by selected gaming type status
-            hover_name="Country_region",
-            hover_data=["Market_region", "Regulation_type", selected_gaming_type],
-            color_discrete_sequence=px.colors.qualitative.Safe,
-            title=f"{selected_gaming_type} Regulation Status by Country"
-        )
-        
-        fig_gaming.update_layout(
-            height=500,
-            margin={"r": 0, "t": 30, "l": 0, "b": 0},
-        )
-        
-        st.plotly_chart(fig_gaming, use_container_width=True)
+        # Filter for specific gaming types
+        gaming_types = [col for col in ["Casino", "iGaming", "Betting", "iBetting"] if col in filtered_df.columns]
+        if gaming_types:
+            selected_gaming_type = st.selectbox("View regulation status for specific type:", gaming_types)
+            
+            # Create a map for the selected gaming type
+            fig_gaming = px.choropleth(
+                filtered_df,
+                locations="Country_region",
+                locationmode="country names",
+                color=selected_gaming_type,  # Color by selected gaming type status
+                hover_name="Country_region",
+                hover_data=[col for col in ["Market_region", "Regulation_type", selected_gaming_type] if col in filtered_df.columns],
+                color_discrete_sequence=px.colors.qualitative.Safe,
+                title=f"{selected_gaming_type} Regulation Status by Country"
+            )
+            
+            fig_gaming.update_layout(
+                height=500,
+                margin={"r": 0, "t": 30, "l": 0, "b": 0},
+            )
+            
+            st.plotly_chart(fig_gaming, use_container_width=True)
 
 # Tax Map view
 with tab2:
