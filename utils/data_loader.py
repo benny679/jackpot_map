@@ -46,7 +46,11 @@ def load_sheet_data():
         # Convert appropriate columns to numeric
         numeric_cols = df.columns[df.columns.str.contains('Amount|Level|Value|%|ID', case=False)]
         for col in numeric_cols:
-            df[col] = pd.to_numeric(df[col], errors='ignore')
+            try:
+                df[col] = pd.to_numeric(df[col])
+            except (ValueError, TypeError):
+                # Keep the column as is if conversion fails
+                pass
 
         return df
     except Exception as e:
