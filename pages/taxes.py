@@ -288,14 +288,14 @@ def load_data():
         st.error("Please check your Google Sheet permissions and ensure the 'Research - Summary' sheet with 'Tax' worksheet exists.")
         # Raise the exception to see detailed error message during development
         raise e
-# Initialize session state variables 
+# 4. INITIALIZE SESSION STATE
 initialize_session_state()
 
-# Check if the user is authenticated
+# 5. AUTHENTICATION CHECK
 if check_password():
     # Log the page view
     if "username" in st.session_state and "ip_address" in st.session_state:
-        log_ip_activity(st.session_state["username"], "page_view_your_page", st.session_state["ip_address"])
+        log_ip_activity(st.session_state["username"], "page_view_igaming_dashboard", st.session_state["ip_address"])
     
     # Show logout button and user info
     st.sidebar.button("Logout", on_click=logout)
@@ -303,13 +303,11 @@ if check_password():
     
     if st.session_state["user_role"] == "admin":
         st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
-
-       if st.session_state["user_role"] == "admin":
-            st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
-
-# Title and description
-st.title("Global iGaming Regulation & Tax Dashboard")
-st.markdown("Interactive map of global iGaming regulations and tax data. Click on countries or filter by region to view detailed information.")
+    
+    # 6. AUTHENTICATED CONTENT - ALL DASHBOARD ELEMENTS
+    # Title and description
+    st.title("Global iGaming Regulation & Tax Dashboard")
+    st.markdown("Interactive map of global iGaming regulations and tax data. Click on countries or filter by region to view detailed information.")
 
 # Load data
 df = load_data()
