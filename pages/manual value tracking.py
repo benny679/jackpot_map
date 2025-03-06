@@ -179,13 +179,16 @@ def create_plotly_plot(filtered_df, level_columns, casino, game, region):
     
     num_levels = len(level_columns)
     
-    # Create a figure with subplots
+    # Create a figure with subplots - one row per level
     fig = make_subplots(
         rows=num_levels, 
         cols=1,
         subplot_titles=[f"{level}" for level in level_columns],
         vertical_spacing=0.1
     )
+    
+    # Define marker symbols - avoid using 'symbol' property directly
+    markers = dict(size=8)
     
     # Add traces for each level
     for i, level in enumerate(level_columns):
@@ -194,17 +197,25 @@ def create_plotly_plot(filtered_df, level_columns, casino, game, region):
                 x=filtered_df["DateTime"],
                 y=filtered_df[level],
                 mode='lines+markers',
-                name=level
+                name=level,
+                line=dict(width=2),
+                marker=markers  # Use the marker dict without 'symbol' property
             ),
             row=i+1, 
             col=1
         )
+        
+        # Update axes for each subplot
+        fig.update_xaxes(title_text="Date", row=i+1, col=1)
+        fig.update_yaxes(title_text="Value", row=i+1, col=1)
     
     # Update layout
     fig.update_layout(
         title_text=f"{casino} - {game} - {region}",
         height=300 * num_levels,
-        showlegend=True
+        width=900,
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     
     return fig
