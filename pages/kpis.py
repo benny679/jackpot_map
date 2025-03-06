@@ -10,6 +10,14 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.ticker as ticker
+# Add this block near the beginning of your main file, after imports and before any functions
+
+# Set environment variables from secrets for the entire application
+import os
+if 'slack' in st.secrets:
+    # Make Slack credentials available as environment variables
+    os.environ['SLACK_TOKEN'] = st.secrets.slack.slack_token
+    os.environ['SLACK_CHANNEL_ID'] = st.secrets.slack.channel_id
 
 from utils.auth import check_password, logout, initialize_session_state
 from utils.ip_manager import log_ip_activity
