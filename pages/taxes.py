@@ -32,6 +32,9 @@ def load_data():
         # Get headers (first row)
         headers = all_values[0]
         
+        # Print headers for debugging
+        st.write("Original headers:", headers)
+        
         # Check for duplicate headers
         if len(headers) != len(set(headers)):
             st.warning("Duplicate column headers detected. Renaming duplicate columns.")
@@ -54,6 +57,37 @@ def load_data():
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         
+        # Clean up column names (strip whitespace, handle case sensitivity)
+        df.columns = [col.strip() for col in df.columns]
+        
+        # Check if expected columns exist, map to standard names if needed
+        column_mapping = {}
+        
+        # Check for Market_region variations
+        if 'Market_region' not in df.columns:
+            # Try to find similar columns
+            possible_matches = [col for col in df.columns if 'market' in col.lower() or 'region' in col.lower()]
+            if possible_matches:
+                st.info(f"Using '{possible_matches[0]}' as Market region column")
+                column_mapping[possible_matches[0]] = 'Market_region'
+            else:
+                # If no market region column found, create a default value
+                df['Market_region'] = 'Unknown'
+                st.warning("No Market region column found. Using 'Unknown' as default value.")
+        
+        # Check for Country_region variations
+        if 'Country_region' not in df.columns:
+            possible_matches = [col for col in df.columns if 'country' in col.lower()]
+            if possible_matches:
+                st.info(f"Using '{possible_matches[0]}' as Country region column")
+                column_mapping[possible_matches[0]] = 'Country_region'
+        
+        # Apply mapping if needed
+        if column_mapping:
+            df = df.rename(columns=column_mapping)
+            
+        st.write("Final columns:", list(df.columns))
+        
         return df
     
     except Exception as e:
@@ -75,26 +109,30 @@ df = load_data()
 # Sidebar filters
 st.sidebar.header("Filters")
 
-# Market region filter
-all_market_regions = sorted(df['Market_region'].unique())
-selected_market_regions = st.sidebar.multiselect("Select Market Regions", all_market_regions, default=all_market_regions)
+# Show column names for debugging
+st.sidebar.expander("Debug Information").write(df.columns.tolist())
+
+# Market region filter - with safety check
+if 'Market_region' in df.columns and not df['Market_region'].isna().all():
+    all_market_regions = sorted(df['Market_region'].unique())
+    selected_market_regions = st.sidebar.multiselect("Select Market Regions", all_market_regions, default=all_market_regions)
+    
+    # Filter data based on selection
+    filtered_df = df[df['Market_region'].isin(selected_market_regions)]
+else:
+    st.sidebar.warning("Market_region column not found or is empty.")
+    filtered_df = df  # Use unfiltered data
 
 # Regulation type filter
-if 'Regulation_type' in df.columns:
+if 'Regulation_type' in df.columns and not df['Regulation_type'].isna().all():
     all_regulation_types = sorted(df['Regulation_type'].unique())
     selected_regulation_types = st.sidebar.multiselect("Select Regulation Types", all_regulation_types, default=all_regulation_types)
     
     # Filter data based on selection
-    filtered_df = df[
-        (df['Market_region'].isin(selected_market_regions)) &
-        (df['Regulation_type'].isin(selected_regulation_types))
-    ]
-else:
-    # If Regulation_type column is not present
-    filtered_df = df[df['Market_region'].isin(selected_market_regions)]
+    filtered_df = filtered_df[filtered_df['Regulation_type'].isin(selected_regulation_types)]
 
 # Priority region filter
-if 'Priority region' in df.columns:
+if 'Priority region' in df.columns and not df['Priority region'].isna().all():
     priority_options = ['All', 'Priority Only', 'Non-Priority Only']
     priority_filter = st.sidebar.radio("Priority Regions", priority_options)
     
@@ -341,7 +379,16 @@ st.header("Country Details")
 st.info("Click on a country in the map or select from the dropdown to see detailed information")
 
 # Country selection dropdown
-selected_country = st.selectbox("Select a country", sorted(filtered_df['Country_region'].unique()))
+if 'Country_region' in filtered_df.columns and not filtered_df.empty:
+    country_list = sorted(filtered_df['Country_region'].unique())
+    if country_list:
+        selected_country = st.selectbox("Select a country", country_list)
+    else:
+        st.warning("No countries available with the current filters.")
+        selected_country = None
+else:
+    st.error("Country_region column not found in the data.")
+    selected_country = None
 
 # Display selected country data
 if selected_country:
