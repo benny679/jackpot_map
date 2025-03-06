@@ -80,8 +80,11 @@ def connect_to_jackpots(country=None):
                         if not filtered_jackpots.empty:
                             break
             
-            # Get unique Jackpot Groups
+            # Filter out rows where Jackpot Group is blank or NaN
             if "Jackpot Group" in filtered_jackpots.columns:
+                filtered_jackpots = filtered_jackpots[filtered_jackpots["Jackpot Group"].notna() & 
+                                                     (filtered_jackpots["Jackpot Group"] != "")]
+                
                 # Get one row per unique Jackpot Group
                 unique_groups = filtered_jackpots.drop_duplicates(subset=["Jackpot Group"])
                 return unique_groups
@@ -96,6 +99,7 @@ def connect_to_jackpots(country=None):
         import traceback
         st.error(traceback.format_exc())
         return pd.DataFrame()  # Return empty DataFrame on error
+
 # Function to load data from Google Sheet
 @st.cache_data(ttl=600)  # Cache data for 10 minutes
 def load_data():
@@ -725,7 +729,7 @@ if st.session_state.selected_country:
                         else:
                             st.write("**Priority Region:** ❌")
             
-                       # Jackpots tab - corrected for proper sheet and worksheet names
+            # Jackpots tab - modified to not return results if jackpot name is blank
             with info_tab4:
                 st.subheader(f"Available Jackpots in {st.session_state.selected_country}")
                 
@@ -733,27 +737,27 @@ if st.session_state.selected_country:
                 jackpot_data = connect_to_jackpots(st.session_state.selected_country)
                 
                 if not jackpot_data.empty:
-                    # Display jackpot count
-                    total_jackpots = len(jackpot_data)
-                    unique_groups = jackpot_data["Jackpot Group"].nunique() if "Jackpot Group" in jackpot_data.columns else 0
-                    
-                    st.success(f"Found {unique_groups} unique Jackpot Groups available in {st.session_state.selected_country}")
-                    
-                    # Create columns for metrics
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Unique Jackpot Groups", unique_groups)
-                    
-                    with col2:
-                        if "Provider" in jackpot_data.columns:
-                            unique_providers = jackpot_data["Provider"].nunique()
-                            st.metric("Unique Providers", unique_providers)
-                    
-                    with col3:
-                        st.metric("Total Jackpot Entries", total_jackpots)
-                    
-                    # Focus on displaying Jackpot Groups
-                    if "Jackpot Group" in jackpot_data.columns:
+                    # Make sure jackpot groups are not blank
+                    if "Jackpot Group" in jackpot_data.columns and jackpot_data["Jackpot Group"].notna().any() and (jackpot_data["Jackpot Group"] != "").any():
+                        # Display jackpot count
+                        total_jackpots = len(jackpot_data)
+                        unique_groups = jackpot_data["Jackpot Group"].nunique()
+                        
+                        st.success(f"Found {unique_groups} unique Jackpot Groups available in {st.session_state.selected_country}")
+                        
+                        # Create columns for metrics
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Unique Jackpot Groups", unique_groups)
+                        
+                        with col2:
+                            if "Provider" in jackpot_data.columns:
+                                unique_providers = jackpot_data["Provider"].nunique()
+                                st.metric("Unique Providers", unique_providers)
+                        
+                        with col3:
+                            st.metric("Total Jackpot Entries", total_jackpots)
+                        
                         # Create section for Jackpot Groups
                         st.subheader("Jackpot Groups")
                         
@@ -781,8 +785,11 @@ if st.session_state.selected_country:
                             )
                             st.plotly_chart(fig, use_container_width=True)
                     else:
-                        # Fallback if Jackpot Group column isn't available
-                        st.dataframe(jackpot_data, use_container_width=True)
+                        # No valid jackpot groups found
+                        st.info(f"No jackpot data available for {st.session_state.selected_country}.")
+                else:
+                    # Empty jackpot data
+                    st.info(f"No jackpot data available for {st.session_state.selected_country}.")
 
 # Footer
 st.markdown("---")
