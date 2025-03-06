@@ -196,7 +196,7 @@ def create_static_ev_added_chart(df, start_date=None, end_date=None, date_format
     colors = ['#DAA520']  # Golden color
     
     # Create figure
-    fig, ax = plt.subplots(figsize=(24, 12))
+    fig, ax = plt.subplots(figsize=(8, 4))
     
     # Make sure EV Added column exists
     if 'EV Added' not in df.columns:
@@ -717,7 +717,7 @@ def main():
                     
                     if chart_type == "Static (Matplotlib)":
                         # Create a static matplotlib chart
-                        fig, ax = plt.subplots(figsize=(10, 6))
+                        fig, ax = plt.subplots(figsize=(8, 2))
                         
                         # Get the filtered data
                         filtered_df = df[(df['Week Commencing'] >= start_date) & (df['Week Commencing'] <= end_date)].copy()
