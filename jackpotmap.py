@@ -342,7 +342,7 @@ def logout():
     st.session_state["username"] = None
     st.session_state["user_role"] = None
     st.session_state["ip_address"] = None
-    st.experimental_rerun()
+    st.rerun()
 
 # Function to load user credentials from file
 # In a production app, you would use a secure database instead
@@ -779,11 +779,11 @@ if check_password():
     
     if st.sidebar.button("Dashboard", key="nav_dashboard"):
         st.session_state.current_page = "dashboard"
-        st.experimental_rerun()
+        st.rerun()
         
     if st.sidebar.button("Jackpot Analysis", key="nav_analysis"):
         st.session_state.current_page = "jackpot_analysis"
-        st.experimental_rerun()
+        st.rerun()
     
     # Show different content based on the current page
     if st.session_state.current_page == "dashboard":
@@ -1056,7 +1056,7 @@ if check_password():
                         with open("logs/rate_limits.json", "w") as f:
                             json.dump({}, f)
                         st.success("Rate limits cleared successfully!")
-                        st.experimental_rerun()
+                        st.rerun()
         
     elif st.session_state.current_page == "jackpot_analysis":
         # Jackpot Analysis page
