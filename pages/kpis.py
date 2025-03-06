@@ -790,7 +790,7 @@ def main():
                                 static_ev_chart.savefig(
                                     chart_file,
                                     bbox_inches='tight',
-                                    dpi=100,
+                                    dpi=50,
                                     facecolor='white',
                                     edgecolor='none'
                                 )
