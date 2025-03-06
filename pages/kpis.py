@@ -73,19 +73,27 @@ def load_kpi_data():
         for col in numeric_columns:
             if col in df.columns:  # Check if column exists
                 df[col] = pd.to_numeric(df[col].replace(['', '-'], np.nan), errors='coerce')
-
-        # Convert EV Added to numeric, removing £ and , characters
         if 'EV Added' in df.columns:
-            df['EV Added'] = df['EV Added'].replace('', np.nan)
-            df['EV Added'] = df['EV Added'].astype(str)
-            # Remove currency symbols, commas and any other non-numeric characters except decimal point
-            df['EV Added'] = df['EV Added'].str.replace('£', '')
-            df['EV Added'] = df['EV Added'].str.replace(',', '')
-            df['EV Added'] = df['EV Added'].str.replace(' ', '')
+            # First replace empty values with NaN
+            df['EV Added'] = df['EV Added'].replace(['', '-'], np.nan)
+            
+            # For non-NaN values, convert to string and clean
+            mask = df['EV Added'].notna()
+            if mask.any():
+                df.loc[mask, 'EV Added'] = df.loc[mask, 'EV Added'].astype(str)
+                # Remove currency symbols, commas and any other non-numeric characters except decimal point
+                df.loc[mask, 'EV Added'] = df.loc[mask, 'EV Added'].str.replace('£', '', regex=False)
+                df.loc[mask, 'EV Added'] = df.loc[mask, 'EV Added'].str.replace(',', '', regex=False)
+                df.loc[mask, 'EV Added'] = df.loc[mask, 'EV Added'].str.replace(' ', '', regex=False)
+            
             # Convert to numeric, coercing errors to NaN
             df['EV Added'] = pd.to_numeric(df['EV Added'], errors='coerce')
+            
             # Replace NaN with 0 for charting purposes
             df['EV Added'] = df['EV Added'].fillna(0)
+            
+            # Ensure it's float64 type for consistency
+            df['EV Added'] = df['EV Added'].astype('float64')
 
         # Convert Week Commencing to datetime
         if 'Week Commencing' in df.columns:
