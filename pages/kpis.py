@@ -706,8 +706,7 @@ def main():
                                             st.error("Failed to upload chart to Slack.")
                                 except Exception as e:
                                     st.error(f"Error exporting Streamlit chart: {str(e)}")
-                    # -------------------- REPLACEMENT SECTION 1 END --------------------white',
-                                            edgecolor='none'
+                                        edgecolor='none'
                                         )
                                         
                                         upload_success = upload_to_slack(chart_file, slack_message)
