@@ -15,18 +15,6 @@ import socket
 import ipaddress
 import csv
 import time
-import matplotlib.pyplot as plt
-from matplotlib import style
-from matplotlib.ticker import ScalarFormatter
-import seaborn as sns
-from scipy import stats
-import warnings
-from urllib3.exceptions import InsecureRequestWarning
-import io
-from PIL import Image
-
-# Suppress insecure HTTPS warnings
-warnings.filterwarnings('ignore', category=InsecureRequestWarning)
 
 # Set page configuration
 st.set_page_config(
@@ -342,7 +330,7 @@ def logout():
     st.session_state["username"] = None
     st.session_state["user_role"] = None
     st.session_state["ip_address"] = None
-    st.rerun()
+    st.experimental_rerun()
 
 # Function to load user credentials from file
 # In a production app, you would use a secure database instead
@@ -400,9 +388,6 @@ if "login_time" not in st.session_state:
     st.session_state["login_time"] = None
 if "ip_address" not in st.session_state:
     st.session_state["ip_address"] = None
-# Initialize page state if it doesn't exist
-if "current_page" not in st.session_state:
-    st.session_state["current_page"] = "dashboard"
 
 # ---------- SLACK AND DATA FUNCTIONS ----------
 
@@ -435,8 +420,7 @@ def load_sheet_data():
     """Load data from Google Sheets."""
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        credentials_dict = st.secrets["gcp_service_account"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_name('client_secret.json', scope)
         client = gspread.authorize(creds)
         sheet = client.open("Low Vol JPS").worksheet("Jackpot Map")
         data = sheet.get_all_values()
@@ -446,425 +430,12 @@ def load_sheet_data():
         # Convert appropriate columns to numeric
         numeric_cols = df.columns[df.columns.str.contains('Amount|Level|Value|%|ID', case=False)]
         for col in numeric_cols:
-            df[col] = pd.to_numeric(df[col])  # Remove errors='ignore'
+            df[col] = pd.to_numeric(df[col], errors='ignore')
 
         return df
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
         return pd.DataFrame()
-
-# JackpotAPI class for analysis page
-class JackpotAPI:
-    def __init__(self, base_url: str = "https://grnst-data-store-serv.com"):
-        self.base_url = base_url.rstrip('/')
-        self.session = requests.Session()
-        self.session.verify = False
-
-    def test_connection(self) -> bool:
-        try:
-            with st.spinner("Testing API connection..."):
-                response = self.session.get(self.base_url)
-                response_text = response.text[:100]  # Get just the first 100 chars to avoid overly long output
-                st.write(f"API Response: {response_text}...")
-                response.raise_for_status()
-                st.success("✅ API connection successful")
-                return True
-        except requests.exceptions.RequestException as e:
-            st.error(f"❌ API connection failed: {str(e)}")
-            return False
-
-    def get_timeseries(
-        self,
-        jackpot_id: str,
-        days: int = None,
-        return_df: bool = True
-    ):
-        """Fetch jackpot timeseries data"""
-        endpoint = f"{self.base_url}/api/timeseries"
-        
-        # First try without timespan
-        payload = {"jackpot_id": jackpot_id}
-        
-        with st.spinner(f"Fetching data for jackpot {jackpot_id}..."):
-            # Show request details in the UI
-            st.text(f"Request URL: {endpoint}")
-            st.text(f"Request payload: {json.dumps(payload, indent=2)}")
-            
-            try:
-                response = self.session.post(endpoint, json=payload, timeout=30)
-                st.text(f"Response status code: {response.status_code}")
-                
-                # Check if we got a successful response
-                response.raise_for_status()
-                data = response.json()
-                
-                # Show a preview of the response
-                st.text(f"Response preview: {str(data)[:200]}...")
-                
-                # If we got no data and days parameter was provided, try with timespan
-                if len(data.get("timeseriesData", [])) == 0 and days is not None:
-                    st.info(f"No data received without timespan, trying with {days} days timespan...")
-                    timespan_ms = days * 24 * 60 * 60 * 1000
-                    payload["timespan"] = timespan_ms
-                    
-                    st.text(f"New request payload: {json.dumps(payload, indent=2)}")
-                    response = self.session.post(endpoint, json=payload, timeout=30)
-                    st.text(f"Response status code: {response.status_code}")
-                    
-                    response.raise_for_status()
-                    data = response.json()
-                
-                if return_df:
-                    df = pd.DataFrame(data.get("timeseriesData", []), columns=['ts', 'amount'])
-                    if not df.empty:
-                        # Ensure amount is numeric
-                        df['amount'] = pd.to_numeric(df['amount'])
-                        df['ts'] = pd.to_datetime(df['ts'], unit='ms')
-                        st.success(f"✅ Successfully fetched {len(df)} data points")
-                        st.text("DataFrame sample:")
-                        st.write(df.head())
-                    else:
-                        st.warning("Received response, but no data points were found.")
-                    return df
-                return data
-                
-            except requests.exceptions.RequestException as e:
-                st.error(f"❌ API request failed: {str(e)}")
-                if hasattr(e, 'response') and e.response is not None:
-                    st.error(f"Response content: {e.response.text}")
-                return pd.DataFrame() if return_df else {}
-                
-            except (KeyError, ValueError) as e:
-                st.error(f"❌ Failed to process response data: {str(e)}")
-                return pd.DataFrame() if return_df else {}
-    
-    def get_mock_timeseries(self, jackpot_id, days=None):
-        """Generate mock data when the API is not available"""
-        st.info("Using sample data since API is not accessible")
-        
-        # Create a date range
-        end_date = pd.Timestamp.now()
-        if days:
-            start_date = end_date - pd.Timedelta(days=days)
-        else:
-            start_date = end_date - pd.Timedelta(days=30)
-        
-        # Generate dates at 15-minute intervals
-        dates = pd.date_range(start=start_date, end=end_date, freq='15min')
-        
-        # Create a base value based on jackpot ID (for consistency)
-        base_value = sum(ord(c) for c in jackpot_id) % 10000 + 5000
-        
-        # Generate values with upward trend and some randomness
-        values = [base_value]
-        for i in range(1, len(dates)):
-            # Small random increase
-            increase = np.random.normal(5, 2)
-            # Occasional large drops (simulating jackpot wins)
-            if np.random.random() < 0.01:  # 1% chance of drop
-                drop = values[-1] * np.random.uniform(0.1, 0.2)  # 10-20% drop
-                values.append(values[-1] + increase - drop)
-            else:
-                values.append(values[-1] + increase)
-        
-        # Create DataFrame
-        df = pd.DataFrame({
-            'ts': dates,
-            'amount': values
-        })
-        
-        st.success(f"✅ Generated {len(df)} mock data points")
-        return df
-
-# Function to analyze jackpot data
-def analyze_jackpot(jackpot_id: str, days: int = None, base_url: str = "https://grnst-data-store-serv.com", use_mock_data: bool = False):
-    api = JackpotAPI(base_url=base_url)
-    
-    # Get data based on mode
-    if use_mock_data:
-        ts_data = api.get_mock_timeseries(jackpot_id, days)
-    else:
-        if not api.test_connection():
-            st.error("Failed to connect to API. Try using Sample Data mode instead.")
-            return
-
-        # Fetch the data
-        ts_data = api.get_timeseries(
-            jackpot_id=jackpot_id,
-            days=days,
-            return_df=True
-        )
-
-    if ts_data.empty:
-        period = f" over the last {days} days" if days else ""
-        st.error(f"No data received for jackpot {jackpot_id}{period}")
-        return
-
-    # Show raw data in an expander
-    with st.expander("View Raw Data"):
-        st.dataframe(ts_data)
-
-    # Create the visualizations
-    st.subheader("Jackpot Analysis Visualizations")
-    
-    # filter for specific start date if data goes back far enough
-    oldest_date = ts_data['ts'].min().date()
-    newest_date = ts_data['ts'].max().date()
-    
-    # Date range selector
-    date_range = st.date_input(
-        "Select date range for analysis",
-        value=[oldest_date, newest_date],
-        min_value=oldest_date,
-        max_value=newest_date
-    )
-    
-    if len(date_range) == 2:
-        start_date, end_date = date_range
-        # Convert date to datetime for filtering
-        start_datetime = pd.Timestamp(start_date)
-        end_datetime = pd.Timestamp(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-        
-        # Filter data based on date range
-        ts_data = ts_data[(ts_data['ts'] >= start_datetime) & (ts_data['ts'] <= end_datetime)]
-    
-    # Calculate differences and identify significant drops
-    ts_data['diff'] = ts_data['amount'].diff()
-    ts_data['diff_pct'] = ts_data['amount'].pct_change()
-    
-    # Allow user to adjust the threshold for significant drops
-    drop_threshold = st.slider(
-        "Significant drop threshold (%)", 
-        min_value=1, 
-        max_value=25, 
-        value=10,
-        help="Define what percentage decrease is considered a significant drop"
-    )
-    
-    ts_data['significant_drop'] = ts_data['diff_pct'] < -drop_threshold/100
-    previous_values = ts_data['amount'].shift(1)
-    ts_data['previous_amount'] = previous_values
-
-    # Filter for significant drops
-    significant_drops = ts_data[ts_data['significant_drop']]
-    
-    if significant_drops.empty:
-        st.warning(f"No significant drops found with the current threshold ({drop_threshold}%).")
-        return
-    
-    significant_drops['previous_amount'] = previous_values[ts_data['significant_drop']]
-
-    # Calculate average drop
-    average_drop = significant_drops['previous_amount'].mean()
-    
-    # Create tabs for different visualizations
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "Jackpot Over Time", 
-        "Significant Drops Histogram", 
-        "Probability Plot",
-        "Cumulative Drops", 
-        "Debug"
-    ])
-    
-    with tab1:
-        # Jackpot over time plot
-        st.subheader("Jackpot Value Over Time")
-        
-        # Create matplotlib figure
-        fig, ax = plt.subplots(figsize=(12, 6))
-        style.use('ggplot')
-        
-        # Plot the data
-        ax.plot(ts_data['ts'], ts_data['amount'], linewidth=1.5)
-        ax.scatter(significant_drops['ts'], significant_drops['amount'], color='red', label='Significant Drop')
-        
-        # Add average drop line
-        ax.axhline(y=average_drop, color='r', linestyle='--', label=f'Average Drop: {average_drop:.2f}')
-        
-        # Annotate the previous value of significant drops
-        for index, row in significant_drops.iterrows():
-            ax.annotate(
-                f"{row['previous_amount']:.2f}", 
-                (row['ts'], row['previous_amount']), 
-                textcoords="offset points", 
-                xytext=(0,10), 
-                ha='center'
-            )
-        
-        # Set title and labels
-        ax.set_title(f"{jackpot_id} Jackpot Over Time")
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Amount")
-        ax.legend()
-        
-        # Format axes
-        ax.yaxis.set_major_formatter(ScalarFormatter())
-        plt.ticklabel_format(style='plain', axis='y')
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        
-        # Display in Streamlit
-        st.pyplot(fig)
-        
-        # Summary statistics
-        st.subheader("Summary Statistics")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Average Drop Amount", f"{average_drop:.2f}")
-        
-        with col2:
-            total_drops = len(significant_drops)
-            st.metric("Total Significant Drops", f"{total_drops}")
-        
-        with col3:
-            days_span = (ts_data['ts'].max() - ts_data['ts'].min()).days
-            drops_per_day = total_drops / max(1, days_span)
-            st.metric("Drops per Day", f"{drops_per_day:.2f}")
-    
-    with tab2:
-        # Histogram of significant drops
-        st.subheader("Significant Drops Histogram")
-        
-        fig, ax = plt.subplots(figsize=(12, 6))
-        
-        sns.histplot(significant_drops['previous_amount'], kde=True, ax=ax, color='#8E44AD', bins=30)
-        ax.set_ylabel('Frequency')
-        ax.set_xlabel('Amount')
-        ax.set_title('Distribution of Significant Drops')
-        
-        # x axis locator and formatter
-        ax.xaxis.set_major_locator(plt.MaxNLocator(25))
-        ax.xaxis.set_major_formatter(ScalarFormatter())
-        
-        st.pyplot(fig)
-        
-        # Summary statistics for the histogram
-        st.subheader("Drop Amount Statistics")
-        
-        stats_df = pd.DataFrame({
-            'Statistic': ['Min', 'Max', 'Mean', 'Median', 'Std Dev'],
-            'Value': [
-                significant_drops['previous_amount'].min(),
-                significant_drops['previous_amount'].max(),
-                significant_drops['previous_amount'].mean(),
-                significant_drops['previous_amount'].median(),
-                significant_drops['previous_amount'].std()
-            ]
-        })
-        
-        st.table(stats_df)
-    
-    with tab3:
-        # Probability plot
-        st.subheader("Probability Plot of Significant Drops")
-        
-        fig, ax = plt.subplots(figsize=(12, 6))
-        
-        # Plot probability plot
-        stats.probplot(significant_drops['previous_amount'], plot=ax)
-        ax.set_title('Significant Drops Probability Plot')
-        
-        st.pyplot(fig)
-        
-        # Explanation
-        st.info("""
-        The probability plot shows how well the drop amounts follow a normal distribution. 
-        Points that follow the straight line indicate normal distribution. 
-        Deviations suggest the data may follow a different distribution.
-        """)
-    
-    with tab4:
-        # Cumulative drops plot
-        st.subheader("Cumulative Drops Over Time")
-        
-        fig, ax = plt.subplots(figsize=(12, 6))
-        
-        # Calculate cumulative daily wins
-        cumulative_daily_wins = significant_drops['previous_amount'].cumsum()
-        # Get the dates for each significant drop
-        cumulative_daily_wins.index = significant_drops['ts']
-        
-        ax.bar(
-            cumulative_daily_wins.index, 
-            cumulative_daily_wins.values,
-            edgecolor='black', 
-            color='g'
-        )
-        
-        # Thicken the bars
-        [i.set_linewidth(2) for i in ax.patches]
-        
-        ax.set_title('Cumulative Drop Amounts')
-        ax.set_xlabel('Date')
-        ax.set_ylabel('Cumulative Amount')
-        ax.tick_params(axis='x', rotation=45)
-        ax.xaxis.set_major_locator(plt.MaxNLocator(10))
-        ax.yaxis.set_major_formatter(ScalarFormatter())
-        ax.ticklabel_format(axis='y', style='plain')
-        
-        plt.tight_layout()
-        st.pyplot(fig)
-        
-        # Growth calculations
-        start_value = ts_data['amount'].iloc[0]
-        end_value = ts_data['amount'].iloc[-1]
-        days_span = (ts_data['ts'].iloc[-1] - ts_data['ts'].iloc[0]).days or 1  # Avoid division by zero
-        
-        growth = (end_value - start_value) / days_span
-        
-        st.metric(
-            "Daily Growth Rate (excluding drops)", 
-            f"{growth:.2f}",
-            delta=f"{(growth/start_value*100):.2f}%" if start_value else "N/A"
-        )
-    
-    with tab5:
-        st.subheader("API Debug Information")
-        st.write("This tab shows debugging information about the API connection.")
-        
-        if use_mock_data:
-            st.info("Using mock data - no actual API connection was made")
-            
-        st.code(f"""
-        API Base URL: {base_url}
-        Jackpot ID: {jackpot_id}
-        Days parameter: {days}
-        Using mock data: {use_mock_data}
-        Data points received: {len(ts_data)}
-        Date range: {ts_data['ts'].min()} to {ts_data['ts'].max()}
-        """)
-        
-        if not use_mock_data and st.button("Test API Connection (Debug)"):
-            api = JackpotAPI(base_url=base_url)
-            api.test_connection()
-            
-        # Advanced debugging - check raw requests
-        if not use_mock_data:
-            st.subheader("Request Tester")
-            custom_payload = st.text_area(
-                "Custom API Request Payload (JSON)", 
-                value=json.dumps({"jackpot_id": jackpot_id}, indent=2)
-            )
-            
-            if st.button("Send Test Request"):
-                try:
-                    test_payload = json.loads(custom_payload)
-                    endpoint = f"{base_url}/api/timeseries"
-                    
-                    with st.spinner("Sending test request..."):
-                        response = requests.post(endpoint, json=test_payload, verify=False, timeout=30)
-                        
-                        st.text(f"Status Code: {response.status_code}")
-                        st.text(f"Response Headers: {dict(response.headers)}")
-                        
-                        try:
-                            st.json(response.json())
-                        except:
-                            st.text(f"Raw Response: {response.text}")
-                except Exception as e:
-                    st.error(f"Error sending test request: {str(e)}")
 
 # ---------- MAIN APP ----------
 
@@ -883,374 +454,277 @@ if check_password():
     # Display IP address (only for admins)
     if st.session_state["user_role"] == "admin":
         st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
-    
-    # Add page navigation
-    st.sidebar.title("Navigation")
-    
-    if st.sidebar.button("Dashboard", key="nav_dashboard"):
-        st.session_state.current_page = "dashboard"
-        st.rerun()
-        
-    if st.sidebar.button("Jackpot Analysis", key="nav_analysis"):
-        st.session_state.current_page = "jackpot_analysis"
-        st.rerun()
-    
-    # Show different content based on the current page
-    if st.session_state.current_page == "dashboard":
-        # Main app layout
-        st.title("🎮 Jackpot Map Dashboard")
 
-        # Sidebar for filters
-        st.sidebar.title("Filters")
-        st.sidebar.markdown("Refine your view using these filters:")
+    # Main app layout
+    st.title("🎮 Jackpot Map Dashboard")
 
-        # Load data from Google Sheets
-        with st.spinner("Loading data from Google Sheets..."):
-            df = load_sheet_data()
+    # Sidebar for filters
+    st.sidebar.title("Filters")
+    st.sidebar.markdown("Refine your view using these filters:")
 
-        if df.empty:
-            st.warning("No data available. Please check your connection to Google Sheets.")
-            st.stop()
+    # Load data from Google Sheets
+    with st.spinner("Loading data from Google Sheets..."):
+        df = load_sheet_data()
 
-        # Search filter at the top
-        st.sidebar.subheader("Quick Search")
-        search = st.sidebar.text_input("Search across all columns", "")
+    if df.empty:
+        st.warning("No data available. Please check your connection to Google Sheets.")
+        st.stop()
 
-        # Advanced filtering
-        st.sidebar.subheader("Advanced Filters")
+    # Search filter at the top
+    st.sidebar.subheader("Quick Search")
+    search = st.sidebar.text_input("Search across all columns", "")
 
-        # Function to create filters with "All" option
-        def create_filter(df, column):
-            options = ["All"] + sorted(df[column].unique().tolist())
-            return st.sidebar.selectbox(f"Filter by {column}", options)
+    # Advanced filtering
+    st.sidebar.subheader("Advanced Filters")
 
-        # Create filters for each column
-        filters = {}
-        filter_columns = ["Parent", "Operator", "Region", "License", "Accounts" ,"Game Name", "Provider", "Jackpot Group", "Type", "Dash ID"]
+    # Function to create filters with "All" option
+    def create_filter(df, column):
+        options = ["All"] + sorted(df[column].unique().tolist())
+        return st.sidebar.selectbox(f"Filter by {column}", options)
 
-        for column in filter_columns:
-            if column in df.columns:
-                filters[column] = create_filter(df, column)
+    # Create filters for each column
+    filters = {}
+    filter_columns = ["Parent", "Operator", "Region", "License", "Accounts" ,"Game Name", "Provider", "Jackpot Group", "Type", "Dash ID"]
 
-        # Apply filters
-        filtered_df = df.copy()
+    for column in filter_columns:
+        if column in df.columns:
+            filters[column] = create_filter(df, column)
 
-        # Apply search filter if provided
-        if search:
-            filtered_df = filtered_df[filtered_df.astype(str).apply(
-                lambda x: x.str.contains(search, case=False, na=False)).any(axis=1)]
+    # Apply filters
+    filtered_df = df.copy()
 
-        # Apply column filters (only when not "All")
-        for column, value in filters.items():
-            if value != "All":
-                filtered_df = filtered_df[filtered_df[column] == value]
+    # Apply search filter if provided
+    if search:
+        filtered_df = filtered_df[filtered_df.astype(str).apply(
+            lambda x: x.str.contains(search, case=False, na=False)).any(axis=1)]
 
-        # Display metrics
-        st.subheader("Summary Metrics")
-        col1, col2, col3 = st.columns(3)
+    # Apply column filters (only when not "All")
+    for column, value in filters.items():
+        if value != "All":
+            filtered_df = filtered_df[filtered_df[column] == value]
 
-        with col1:
-            st.metric("Total Records", f"{len(filtered_df)}")
+    # Display metrics
+    st.subheader("Summary Metrics")
+    col1, col2, col3 = st.columns(3)
 
-        with col2:
-            num_operators = filtered_df["Operator"].nunique() if "Operator" in filtered_df.columns else 0
-            st.metric("Unique Operators", f"{num_operators}")
+    with col1:
+        st.metric("Total Records", f"{len(filtered_df)}")
 
-        with col3:
-            num_games = filtered_df["Game Name"].nunique() if "Game Name" in filtered_df.columns else 0
-            st.metric("Unique Games", f"{num_games}")
+    with col2:
+        num_operators = filtered_df["Operator"].nunique() if "Operator" in filtered_df.columns else 0
+        st.metric("Unique Operators", f"{num_operators}")
 
-        # Display filtered data
-        st.subheader("Filtered Data")
-        st.dataframe(filtered_df, use_container_width=True)
+    with col3:
+        num_games = filtered_df["Game Name"].nunique() if "Game Name" in filtered_df.columns else 0
+        st.metric("Unique Games", f"{num_games}")
 
-        # Visualization section (only shown to certain roles)
-        if st.session_state["user_role"] in ["admin", "analyst"]:
-            st.subheader("Visualizations")
+    # Display filtered data
+    st.subheader("Filtered Data")
+    st.dataframe(filtered_df, use_container_width=True)
 
-            tab1, tab2 = st.tabs(["Distribution Analysis", "Detailed Counts"])
+    # Visualization section (only shown to certain roles)
+    if st.session_state["user_role"] in ["admin", "analyst"]:
+        st.subheader("Visualizations")
 
-            with tab1:
-                # Distribution by region and operator
-                if "Region" in filtered_df.columns and "Operator" in filtered_df.columns:
-                    region_operator_counts = filtered_df.groupby(["Region", "Operator"]).size().reset_index(name="Count")
-                    st.bar_chart(region_operator_counts.pivot(index="Region", columns="Operator", values="Count"))
+        tab1, tab2 = st.tabs(["Distribution Analysis", "Detailed Counts"])
 
-            with tab2:
-                # Detailed counts by different dimensions
-                if "Provider" in filtered_df.columns:
-                    col1, col2 = st.columns(2)
+        with tab1:
+            # Distribution by region and operator
+            if "Region" in filtered_df.columns and "Operator" in filtered_df.columns:
+                region_operator_counts = filtered_df.groupby(["Region", "Operator"]).size().reset_index(name="Count")
+                st.bar_chart(region_operator_counts.pivot(index="Region", columns="Operator", values="Count"))
 
-                    with col1:
-                        provider_counts = filtered_df["Provider"].value_counts().reset_index()
-                        provider_counts.columns = ["Provider", "Count"]
-                        st.bar_chart(provider_counts.set_index("Provider"))
+        with tab2:
+            # Detailed counts by different dimensions
+            if "Provider" in filtered_df.columns:
+                col1, col2 = st.columns(2)
 
-                    with col2:
-                        if "Jackpot Group" in filtered_df.columns:
-                            jackpot_counts = filtered_df["Jackpot Group"].value_counts().reset_index()
-                            jackpot_counts.columns = ["Jackpot Group", "Count"]
-                            st.bar_chart(jackpot_counts.set_index("Jackpot Group"))
+                with col1:
+                    provider_counts = filtered_df["Provider"].value_counts().reset_index()
+                    provider_counts.columns = ["Provider", "Count"]
+                    st.bar_chart(provider_counts.set_index("Provider"))
 
-        # Export options (restricted by role)
-        st.subheader("Export Data")
-        col1, col2 = st.columns(2)
+                with col2:
+                    if "Jackpot Group" in filtered_df.columns:
+                        jackpot_counts = filtered_df["Jackpot Group"].value_counts().reset_index()
+                        jackpot_counts.columns = ["Jackpot Group", "Count"]
+                        st.bar_chart(jackpot_counts.set_index("Jackpot Group"))
 
-        with col1:
-            if st.button("Download Filtered Data as CSV"):
-                file_path = "jackpot_map_filtered.csv"
-                filtered_df.to_csv(file_path, index=False)
-                st.download_button(
-                    label="Download CSV",
-                    data=filtered_df.to_csv(index=False).encode('utf-8'),
-                    file_name="jackpot_map_filtered.csv",
-                    mime="text/csv"
-                )
+    # Export options (restricted by role)
+    st.subheader("Export Data")
+    col1, col2 = st.columns(2)
 
-        # Slack upload only for admin users
-        if st.session_state["user_role"] == "admin":
-            with col2:
-                slack_message = st.text_input("Slack Message (optional)", "Here's the latest jackpot map data:")
-                if st.button("Upload Filtered Data to Slack"):
-                    if SLACK_TOKEN:
-                        file_path = "jackpot_map_filtered.csv"
-                        filtered_df.to_csv(file_path, index=False)
-                        upload_to_slack(file_path, slack_message)
-                    else:
-                        st.warning("Slack token not set. Please set the SLACK_TOKEN environment variable.")
-
-        # Admin panel (only shown to admin users)
-        if st.session_state["user_role"] == "admin":
-            st.subheader("Admin Panel")
-
-            # Create tabs for different admin functions
-            admin_tab1, admin_tab2, admin_tab3 = st.tabs(["User Activity", "IP Management", "System Logs"])
-
-            with admin_tab1:
-                # Show recent login activity
-                if os.path.exists("logs/login_activity.csv"):
-                    login_activity = pd.read_csv("logs/login_activity.csv")
-
-                    st.write("Recent Login Activity")
-
-                    # Filter options
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        filter_status = st.selectbox("Filter by Status", ["All", "success", "failed"])
-                    with col2:
-                        filter_user = st.selectbox("Filter by User", ["All"] + list(set(login_activity["Username"].tolist())))
-
-                    # Apply filters
-                    filtered_activity = login_activity.copy()
-                    if filter_status != "All":
-                        filtered_activity = filtered_activity[filtered_activity["Status"] == filter_status]
-                    if filter_user != "All":
-                        filtered_activity = filtered_activity[filtered_activity["Username"] == filter_user]
-
-                    # Sort by most recent first
-                    filtered_activity = filtered_activity.sort_values("Timestamp", ascending=False)
-
-                    st.dataframe(filtered_activity, use_container_width=True)
-
-            with admin_tab2:
-                st.write("IP Address Management")
-
-                # Load IP configuration
-                try:
-                    with open("ip_config.json", "r") as f:
-                        ip_config = json.load(f)
-                except FileNotFoundError:
-                    ip_config = {
-                        "mode": "allow_all",
-                        "allow_list": [],
-                        "deny_list": []
-                    }
-
-                # IP configuration options
-                st.subheader("IP Access Control")
-
-                # Select mode
-                mode = st.radio("IP Access Mode",
-                                ["Allow All (default)", "Deny All", "Use Allow/Deny Lists"],
-                                index=["allow_all", "deny_all", "use_lists"].index(ip_config.get("mode", "allow_all")))
-
-                # Convert mode to internal representation
-                if mode == "Allow All (default)":
-                    ip_config["mode"] = "allow_all"
-                elif mode == "Deny All":
-                    ip_config["mode"] = "deny_all"
-                else:
-                    ip_config["mode"] = "use_lists"
-
-                # Allow/Deny list management
-                if ip_config["mode"] == "use_lists":
-                    col1, col2 = st.columns(2)
-
-                    with col1:
-                        st.subheader("Allow List")
-                        allow_list = st.text_area("IPs to Allow (one per line)",
-                                                "\n".join(ip_config.get("allow_list", [])))
-                        ip_config["allow_list"] = [ip.strip() for ip in allow_list.split("\n") if ip.strip()]
-
-                    with col2:
-                        st.subheader("Deny List")
-                        deny_list = st.text_area("IPs to Deny (one per line)",
-                                               "\n".join(ip_config.get("deny_list", [])))
-                        ip_config["deny_list"] = [ip.strip() for ip in deny_list.split("\n") if ip.strip()]
-
-                    st.info("You can use individual IPs (e.g., 192.168.1.1) or CIDR notation (e.g., 192.168.1.0/24)")
-
-                # Save IP configuration
-                if st.button("Save IP Configuration"):
-                    with open("ip_config.json", "w") as f:
-                        json.dump(ip_config, f, indent=4)
-                    st.success("IP configuration saved successfully!")
-
-                # Show IP activity logs
-                st.subheader("IP Activity Logs")
-
-                if os.path.exists("logs/ip_activity.csv"):
-                    ip_activity = pd.read_csv("logs/ip_activity.csv")
-
-                    # Filter options
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        filter_activity = st.selectbox("Filter by Activity",
-                                                    ["All"] + list(set(ip_activity["Activity"].tolist())))
-                    with col2:
-                        filter_ip = st.selectbox("Filter by IP",
-                                              ["All"] + list(set(ip_activity["IP Address"].tolist())))
-
-                    # Apply filters
-                    filtered_ip_activity = ip_activity.copy()
-                    if filter_activity != "All":
-                        filtered_ip_activity = filtered_ip_activity[filtered_ip_activity["Activity"] == filter_activity]
-                    if filter_ip != "All":
-                        filtered_ip_activity = filtered_ip_activity[filtered_ip_activity["IP Address"] == filter_ip]
-
-                    # Sort by most recent first
-                    filtered_ip_activity = filtered_ip_activity.sort_values("Timestamp", ascending=False)
-
-                    st.dataframe(filtered_ip_activity, use_container_width=True)
-
-            with admin_tab3:
-                st.write("System Logs")
-
-                # Show rate limiting information
-                st.subheader("Rate Limiting Status")
-
-                if os.path.exists("logs/rate_limits.json"):
-                    with open("logs/rate_limits.json", "r") as f:
-                        rate_limits = json.load(f)
-
-                    # Create a dataframe for display
-                    rate_limit_data = []
-                    current_time = time.time()
-
-                    for key, data in rate_limits.items():
-                        entry = {
-                            "Type": "User" if not key.startswith("ip_") else "IP",
-                            "Username/IP": key[3:] if key.startswith("ip_") else key,
-                            "Attempts": data.get("attempts", 0),
-                            "Status": "Locked" if current_time < data.get("reset_time", 0) else "Active",
-                            "Lockout Expires": datetime.fromtimestamp(data.get("reset_time", 0)).strftime("%Y-%m-%d %H:%M:%S")
-                                            if "reset_time" in data else "N/A"
-                        }
-                        rate_limit_data.append(entry)
-
-                    rate_limit_df = pd.DataFrame(rate_limit_data)
-                    st.dataframe(rate_limit_df, use_container_width=True)
-
-                    # Button to clear rate limits
-                    if st.button("Clear All Rate Limits"):
-                        with open("logs/rate_limits.json", "w") as f:
-                            json.dump({}, f)
-                        st.success("Rate limits cleared successfully!")
-                        st.rerun()
-        
-    elif st.session_state.current_page == "jackpot_analysis":
-        # Jackpot Analysis page
-        st.title("📈 Jackpot Analysis")
-        
-        # Check permissions
-        if st.session_state["user_role"] not in ["admin", "analyst"]:
-            st.error("You don't have permission to access this feature.")
-            st.stop()
-            
-        # Sidebar inputs for jackpot analysis
-        st.sidebar.subheader("Analysis Parameters")
-        
-        # Data source selection
-        api_mode = st.sidebar.radio(
-            "Data Source",
-            ["Live API", "Sample Data"],
-            index=1,  # Default to Sample Data
-            help="Use Sample Data if the API is not accessible"
-        )
-        
-        use_mock_data = (api_mode == "Sample Data")
-        
-        # API settings (only shown when using Live API)
-        if not use_mock_data:
-            # API Base URL input
-            base_url = st.sidebar.text_input(
-                "API Base URL",
-                value="https://grnst-data-store-serv.com",
-                help="The base URL for the jackpot API"
+    with col1:
+        if st.button("Download Filtered Data as CSV"):
+            file_path = "jackpot_map_filtered.csv"
+            filtered_df.to_csv(file_path, index=False)
+            st.download_button(
+                label="Download CSV",
+                data=filtered_df.to_csv(index=False).encode('utf-8'),
+                file_name="jackpot_map_filtered.csv",
+                mime="text/csv"
             )
-            
-            # Test connection button
-            if st.sidebar.button("Test API Connection"):
-                api = JackpotAPI(base_url=base_url)
-                api.test_connection()
-        else:
-            base_url = "https://grnst-data-store-serv.com"  # Dummy URL when using mock data
 
-        # Jackpot ID input
-        jackpot_id = st.sidebar.text_input(
-            "Jackpot ID",
-            value="feeds-jackpots.s3.amazonaws.com_Ave Caesar_LEAVECAESAR",
-            help="Enter the unique identifier for the jackpot"
-        )
-
-        # Days input
-        days_options = [7, 14, 30, 60, 90, "All"]
-        days_selection = st.sidebar.selectbox(
-            "Data Timespan",
-            options=days_options,
-            index=0,
-            help="Select how many days of data to analyze"
-        )
-
-        # Convert "All" to None for the API function
-        days = None if days_selection == "All" else days_selection
-
-        # Run analysis button
-        if st.sidebar.button("Run Analysis"):
-            if jackpot_id:
-                analyze_jackpot(jackpot_id, days, base_url, use_mock_data)
-            else:
-                st.error("Please enter a valid Jackpot ID")
-        
-        # Sample data section
-        st.subheader("Sample Jackpots")
-        st.write("Click on any sample jackpot to analyze it:")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("Ave Caesar"):
-                analyze_jackpot("feeds-jackpots.s3.amazonaws.com_Ave Caesar_LEAVECAESAR", days, base_url, use_mock_data)
-                
-            if st.button("Red Tiger Mega Jackpot"):
-                analyze_jackpot("feed-skillonnet.redtiger.cash_skillOnNet-Mega Jackpot_38002", days, base_url, use_mock_data)
-                
+    # Slack upload only for admin users
+    if st.session_state["user_role"] == "admin":
         with col2:
-            if st.button("Daily Drop Jackpot"):
-                analyze_jackpot("feed-skillonnet.redtiger.cash_skillOnNet-Daily Drop_46712", days, base_url, use_mock_data)
-                
-            if st.button("Progressive Jackpot"): 
-                analyze_jackpot("feed-operator.provider.jackpot_example_12345", days, base_url, use_mock_data)
+            slack_message = st.text_input("Slack Message (optional)", "Here's the latest jackpot map data:")
+            if st.button("Upload Filtered Data to Slack"):
+                if SLACK_TOKEN:
+                    file_path = "jackpot_map_filtered.csv"
+                    filtered_df.to_csv(file_path, index=False)
+                    upload_to_slack(file_path, slack_message)
+                else:
+                    st.warning("Slack token not set. Please set the SLACK_TOKEN environment variable.")
+
+    # Admin panel (only shown to admin users)
+    if st.session_state["user_role"] == "admin":
+        st.subheader("Admin Panel")
+
+        # Create tabs for different admin functions
+        admin_tab1, admin_tab2, admin_tab3 = st.tabs(["User Activity", "IP Management", "System Logs"])
+
+        with admin_tab1:
+            # Show recent login activity
+            if os.path.exists("logs/login_activity.csv"):
+                login_activity = pd.read_csv("logs/login_activity.csv")
+
+                st.write("Recent Login Activity")
+
+                # Filter options
+                col1, col2 = st.columns(2)
+                with col1:
+                    filter_status = st.selectbox("Filter by Status", ["All", "success", "failed"])
+                with col2:
+                    filter_user = st.selectbox("Filter by User", ["All"] + list(set(login_activity["Username"].tolist())))
+
+                # Apply filters
+                filtered_activity = login_activity.copy()
+                if filter_status != "All":
+                    filtered_activity = filtered_activity[filtered_activity["Status"] == filter_status]
+                if filter_user != "All":
+                    filtered_activity = filtered_activity[filtered_activity["Username"] == filter_user]
+
+                # Sort by most recent first
+                filtered_activity = filtered_activity.sort_values("Timestamp", ascending=False)
+
+                st.dataframe(filtered_activity, use_container_width=True)
+
+        with admin_tab2:
+            st.write("IP Address Management")
+
+            # Load IP configuration
+            try:
+                with open("ip_config.json", "r") as f:
+                    ip_config = json.load(f)
+            except FileNotFoundError:
+                ip_config = {
+                    "mode": "allow_all",
+                    "allow_list": [],
+                    "deny_list": []
+                }
+
+            # IP configuration options
+            st.subheader("IP Access Control")
+
+            # Select mode
+            mode = st.radio("IP Access Mode",
+                            ["Allow All (default)", "Deny All", "Use Allow/Deny Lists"],
+                            index=["allow_all", "deny_all", "use_lists"].index(ip_config.get("mode", "allow_all")))
+
+            # Convert mode to internal representation
+            if mode == "Allow All (default)":
+                ip_config["mode"] = "allow_all"
+            elif mode == "Deny All":
+                ip_config["mode"] = "deny_all"
+            else:
+                ip_config["mode"] = "use_lists"
+
+            # Allow/Deny list management
+            if ip_config["mode"] == "use_lists":
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.subheader("Allow List")
+                    allow_list = st.text_area("IPs to Allow (one per line)",
+                                             "\n".join(ip_config.get("allow_list", [])))
+                    ip_config["allow_list"] = [ip.strip() for ip in allow_list.split("\n") if ip.strip()]
+
+                with col2:
+                    st.subheader("Deny List")
+                    deny_list = st.text_area("IPs to Deny (one per line)",
+                                            "\n".join(ip_config.get("deny_list", [])))
+                    ip_config["deny_list"] = [ip.strip() for ip in deny_list.split("\n") if ip.strip()]
+
+                st.info("You can use individual IPs (e.g., 192.168.1.1) or CIDR notation (e.g., 192.168.1.0/24)")
+
+            # Save IP configuration
+            if st.button("Save IP Configuration"):
+                with open("ip_config.json", "w") as f:
+                    json.dump(ip_config, f, indent=4)
+                st.success("IP configuration saved successfully!")
+
+            # Show IP activity logs
+            st.subheader("IP Activity Logs")
+
+            if os.path.exists("logs/ip_activity.csv"):
+                ip_activity = pd.read_csv("logs/ip_activity.csv")
+
+                # Filter options
+                col1, col2 = st.columns(2)
+                with col1:
+                    filter_activity = st.selectbox("Filter by Activity",
+                                                 ["All"] + list(set(ip_activity["Activity"].tolist())))
+                with col2:
+                    filter_ip = st.selectbox("Filter by IP",
+                                           ["All"] + list(set(ip_activity["IP Address"].tolist())))
+
+                # Apply filters
+                filtered_ip_activity = ip_activity.copy()
+                if filter_activity != "All":
+                    filtered_ip_activity = filtered_ip_activity[filtered_ip_activity["Activity"] == filter_activity]
+                if filter_ip != "All":
+                    filtered_ip_activity = filtered_ip_activity[filtered_ip_activity["IP Address"] == filter_ip]
+
+                # Sort by most recent first
+                filtered_ip_activity = filtered_ip_activity.sort_values("Timestamp", ascending=False)
+
+                st.dataframe(filtered_ip_activity, use_container_width=True)
+
+        with admin_tab3:
+            st.write("System Logs")
+
+            # Show rate limiting information
+            st.subheader("Rate Limiting Status")
+
+            if os.path.exists("logs/rate_limits.json"):
+                with open("logs/rate_limits.json", "r") as f:
+                    rate_limits = json.load(f)
+
+                # Create a dataframe for display
+                rate_limit_data = []
+                current_time = time.time()
+
+                for key, data in rate_limits.items():
+                    entry = {
+                        "Type": "User" if not key.startswith("ip_") else "IP",
+                        "Username/IP": key[3:] if key.startswith("ip_") else key,
+                        "Attempts": data.get("attempts", 0),
+                        "Status": "Locked" if current_time < data.get("reset_time", 0) else "Active",
+                        "Lockout Expires": datetime.fromtimestamp(data.get("reset_time", 0)).strftime("%Y-%m-%d %H:%M:%S")
+                                        if "reset_time" in data else "N/A"
+                    }
+                    rate_limit_data.append(entry)
+
+                rate_limit_df = pd.DataFrame(rate_limit_data)
+                st.dataframe(rate_limit_df, use_container_width=True)
+
+                # Button to clear rate limits
+                if st.button("Clear All Rate Limits"):
+                    with open("logs/rate_limits.json", "w") as f:
+                        json.dump({}, f)
+                    st.success("Rate limits cleared successfully!")
+                    st.experimental_rerun()
 
     # Footer with information
     st.markdown("---")
