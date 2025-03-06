@@ -24,15 +24,6 @@ import time
 from utils.auth import check_password, logout, initialize_session_state
 from utils.ip_manager import log_ip_activity
 
-
-# Set page configuration
-st.set_page_config(
-    page_title="Taxes",
-    page_icon="🏦",
-    layout="wide"
-)
-
-
 # Initialize session state variables
 initialize_session_state()
 
