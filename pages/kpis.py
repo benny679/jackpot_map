@@ -196,7 +196,7 @@ def create_static_ev_added_chart(df, start_date=None, end_date=None, date_format
     colors = ['#DAA520']  # Golden color
     
     # Create figure
-    fig, ax = plt.subplots(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=(24, 12))
     
     # Make sure EV Added column exists
     if 'EV Added' not in df.columns:
