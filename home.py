@@ -16,7 +16,8 @@ initialize_session_state()
 
 # Main app layout
 st.title("🎮 Jackpot Map Dashboard")
-st.write("Welcome to the Jackpot Map Dashboard. Please log in to access the system.")
+st.write("Dashboard for RNG Research related stuff")
+st.write("Message Ben for a log-in and permissions")
 
 # Check if the user is authenticated
 if check_password():
