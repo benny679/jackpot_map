@@ -761,7 +761,7 @@ if st.session_state.selected_country:
                         display_columns = []
                         
                         # Check for important jackpot columns and add them if they exist
-                        for col in ["Operator", "Game Name","Provider" "Type", "Tier", "Jackpot Group", "Accounts"]:
+                        for col in ["Operator", "Game Name", "Provider", "Type", "Tiers", "Jackpot Group", "Accounts"]:
                             if col in jackpot_data.columns:
                                 display_columns.append(col)
                         
