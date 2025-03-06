@@ -797,7 +797,7 @@ if st.session_state.selected_country:
                         }
                         
                         # Navigate to Jackpot Map page
-                        st.experimental_set_query_params(**params)
+                        st.query_params(**params)
                 else:
                     st.info(f"No jackpot data available for {st.session_state.selected_country}.")
                     st.warning("No jackpots found in Column C of the Jackpot Map worksheet for this country.")
@@ -814,7 +814,7 @@ if st.session_state.selected_country:
                     
                     # Still provide a link to the jackpot map
                     if st.button("Go to Jackpot Map Dashboard"):
-                        st.experimental_set_query_params(page="jackpot_map")
+                        st.query_params(page="jackpot_map")
     else:
         st.warning(f"No data available for {st.session_state.selected_country}")
 else:
