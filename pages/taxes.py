@@ -24,8 +24,17 @@ import time
 from utils.auth import check_password, logout, initialize_session_state
 from utils.ip_manager import log_ip_activity
 
+# Page configuration
+st.set_page_config(page_title="Global iGaming Regulation & Tax Map", layout="wide")
+
+# Title and description
+st.title("Global iGaming Regulation & Tax Dashboard")
+st.markdown("Interactive map of global iGaming regulations and tax data. Click on countries or filter by region to view detailed information.")
+
 # Initialize session state variables
 initialize_session_state()
+
+
 
 # Check if the user is authenticated
 if check_password():
@@ -207,13 +216,6 @@ def load_data():
         st.error("Please check your Google Sheet permissions and ensure the 'Research - Summary' sheet with 'Tax' worksheet exists.")
         # Raise the exception to see detailed error message during development
         raise e
-
-# Page configuration
-st.set_page_config(page_title="Global iGaming Regulation & Tax Map", layout="wide")
-
-# Title and description
-st.title("Global iGaming Regulation & Tax Dashboard")
-st.markdown("Interactive map of global iGaming regulations and tax data. Click on countries or filter by region to view detailed information.")
 
 # Load data
 df = load_data()
