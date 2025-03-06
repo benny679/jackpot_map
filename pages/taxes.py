@@ -4,6 +4,32 @@ import plotly.express as px
 import gspread
 from google.oauth2 import service_account
 import re
+import pandas as pd
+import numpy as np
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
+import os
+import streamlit as st
+import hashlib
+import hmac
+import json
+import requests
+from datetime import datetime, timedelta
+import socket
+import ipaddress
+import csv
+import time
+
+
+# Set page configuration
+st.set_page_config(
+    page_title="Jackpot Map Dashboard",
+    page_icon="🎮",
+    layout="wide"
+)
+
 
 # Initialize session state variables
 initialize_session_state()
