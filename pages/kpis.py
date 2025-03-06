@@ -762,7 +762,7 @@ def main():
                         )
                         
                         # Format the chart
-                        ax.set_title('EV Added Over Time', fontsize=16)
+                        ax.set_title('EV Added Over Time', fontsize=2)
                         ax.set_xlabel('Week Commencing', fontsize=12)
                         ax.set_ylabel('EV Added (£)', fontsize=12)
                         ax.grid(True, linestyle='--', alpha=0.7)
