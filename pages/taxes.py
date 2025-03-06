@@ -628,7 +628,7 @@ if st.session_state.selected_country:
                 with col1:
                     # Tax information in metrics
                     st.subheader("Tax Rates")
-                    st.write(f"{operator_tax}%")
+                    st.write(f"{Operator_tax}")
                     
                     tax_cols = [col for col in ['Operator_tax', 'Player_tax'] if col in country_data.columns]
                     if tax_cols:
