@@ -732,7 +732,7 @@ def main():
                             linestyle='-',
                             color='black',
                             linewidth=1,
-                            markersize=4
+                            markersize=2
                         )
                         
                         # Fill the area
