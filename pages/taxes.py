@@ -4,6 +4,37 @@ import plotly.express as px
 import gspread
 from google.oauth2 import service_account
 import re
+from utils.auth import check_password, logout, initialize_session_state
+from utils.ip_manager import log_ip_activity
+
+# Then your other imports
+import pandas as pd
+import plotly.express as px
+import gspread
+from google.oauth2 import service_account
+import re
+
+# Set page configuration (must be first Streamlit command)
+st.set_page_config(page_title="Global iGaming Regulation & Tax Map", layout="wide")
+
+# Initialize session state variables
+initialize_session_state()
+
+# Check if the user is authenticated
+if check_password():
+    # Log the page view with IP
+    if "username" in st.session_state and "ip_address" in st.session_state:
+        log_ip_activity(st.session_state["username"], "page_view_dashboard", st.session_state["ip_address"])
+    
+    # Display logout button in the sidebar
+    st.sidebar.button("Logout", on_click=logout)
+    
+    # Display user information
+    st.sidebar.info(f"Logged in as: {st.session_state['username']} ({st.session_state['user_role']})")
+    
+    # Display IP address (only for admins)
+    if st.session_state["user_role"] == "admin":
+        st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
 
 # Function to connect to jackpot data - CORRECTED sheet and worksheet names
 def connect_to_jackpots(country=None):
