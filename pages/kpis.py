@@ -633,112 +633,43 @@ def main():
                             filtered_df = filtered_df[['Week Commencing'] + existing_columns].set_index('Week Commencing')
                             st.area_chart(filtered_df, use_container_width=True)
                     
-                   # Replace the existing Slack upload button section with this:
-col1, col2 = st.columns([3, 1])
-with col1:
-    slack_message = st.text_input(
-        "Slack message (optional)",
-        value="KPI Metrics Chart"
-    )
-with col2:
-    if st.button("Export Current Chart to Slack", key="export_kpi"):
-        # Check which chart type is currently displayed
-        current_chart_type = chart_type  # This is from the radio selection
-        
-        if current_chart_type == "Static (Matplotlib)":
-            # Use the existing Matplotlib export functionality
-            static_chart = create_static_stacked_area_chart(
-                df,
-                columns=selected_kpis,
-                start_date=start_date,
-                end_date=end_date,
-                date_format=date_format.replace("'", ""),
-                date_interval=date_interval,
-                y_limit=y_limit
-            )
-            
-            if static_chart:
-                chart_file = "kpi_chart.png"
-                static_chart.savefig(
-                    chart_file,
-                    bbox_inches='tight',
-                    dpi=300,
-                    facecolor='white',
-                    edgecolor='none'
-                )
-                
-                upload_success = upload_to_slack(chart_file, slack_message)
-                if upload_success:
-                    st.success("Matplotlib chart uploaded to Slack successfully!")
-                else:
-                    st.error("Failed to upload chart to Slack.")
-                    
-        elif current_chart_type == "Interactive (Altair)":
-            try:
-                # For Altair, we need to save as HTML or as PNG via Selenium
-                # As a simpler solution, we'll fall back to Matplotlib for export
-                st.info("Converting Altair chart for export...")
-                
-                static_chart = create_static_stacked_area_chart(
-                    df,
-                    columns=selected_kpis,
-                    start_date=start_date,
-                    end_date=end_date,
-                    date_format=date_format.replace("'", ""),
-                    date_interval=date_interval,
-                    y_limit=y_limit
-                )
-                
-                if static_chart:
-                    chart_file = "kpi_chart.png"
-                    static_chart.savefig(
-                        chart_file,
-                        bbox_inches='tight',
-                        dpi=300,
-                        facecolor='white',
-                        edgecolor='none'
-                    )
-                    
-                    upload_success = upload_to_slack(chart_file, slack_message)
-                    if upload_success:
-                        st.success("Altair chart (converted to static) uploaded to Slack successfully!")
-                    else:
-                        st.error("Failed to upload chart to Slack.")
-            except Exception as e:
-                st.error(f"Error exporting Altair chart: {str(e)}")
-                
-        elif current_chart_type == "Simple (Streamlit)":
-            try:
-                # For Streamlit charts, we also need to create a static version
-                st.info("Converting Streamlit chart for export...")
-                
-                static_chart = create_static_stacked_area_chart(
-                    df,
-                    columns=selected_kpis,
-                    start_date=start_date,
-                    end_date=end_date,
-                    date_format=date_format.replace("'", ""),
-                    date_interval=date_interval,
-                    y_limit=y_limit
-                )
-                
-                if static_chart:
-                    chart_file = "kpi_chart.png"
-                    static_chart.savefig(
-                        chart_file,
-                        bbox_inches='tight',
-                        dpi=300,
-                        facecolor='white',
-                        edgecolor='none'
-                    )
-                    
-                    upload_success = upload_to_slack(chart_file, slack_message)
-                    if upload_success:
-                        st.success("Streamlit chart (converted to static) uploaded to Slack successfully!")
-                    else:
-                        st.error("Failed to upload chart to Slack.")
-            except Exception as e:
-                st.error(f"Error exporting Streamlit chart: {str(e)}")
+                    # Option to upload to Slack (need to create static version for this)
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        slack_message = st.text_input(
+                            "Slack message (optional)",
+                            value="KPI Metrics Chart"
+                        )
+                    with col2:
+                        if st.button("Upload to Slack", key="upload_kpi"):
+                            # Create a static version for export
+                            static_chart = create_static_stacked_area_chart(
+                                df,
+                                columns=selected_kpis,
+                                start_date=start_date,
+                                end_date=end_date,
+                                date_format=date_format.replace("'", ""),
+                                date_interval=date_interval,
+                                y_limit=y_limit
+                            )
+                            
+                            if static_chart:
+                                # Save chart to a temporary file
+                                chart_file = "kpi_chart.png"
+                                static_chart.savefig(
+                                    chart_file,
+                                    bbox_inches='tight',
+                                    dpi=300,
+                                    facecolor='white',
+                                    edgecolor='none'
+                                )
+                                
+                                # Upload to Slack
+                                upload_success = upload_to_slack(chart_file, slack_message)
+                                if upload_success:
+                                    st.success("Chart uploaded to Slack successfully!")
+                                else:
+                                    st.error("Failed to upload chart to Slack.")
             else:
                 st.warning("Please select at least one KPI metric to display.")
             
