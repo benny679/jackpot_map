@@ -472,7 +472,7 @@ def main():
                 if st.sidebar.button("Use Agg Backend"):
                     plt.switch_backend('Agg')
                     st.sidebar.success(f"Switched to Agg backend")
-                    st.experimental_rerun()
+                    st.rerun()
         
         # Input form
         with st.form("jackpot_analysis_form"):
