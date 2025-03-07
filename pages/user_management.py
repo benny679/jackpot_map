@@ -3,6 +3,7 @@ import pandas as pd
 import json
 import hashlib
 import os
+from datetime import datetime
 from utils.auth import check_password, logout, initialize_session_state
 from utils.ip_manager import log_ip_activity
 
@@ -39,12 +40,22 @@ def load_credentials():
     utils_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "utils")
     credentials_path = os.path.join(utils_dir, "credentials.json")
     
-    st.session_state['credentials_path'] = credentials_path  # Store path in session state for debugging
+    # Store debug information
+    if "debug_info" not in st.session_state:
+        st.session_state.debug_info = {}
+    
+    st.session_state.debug_info["credentials_path"] = credentials_path
+    st.session_state.debug_info["load_attempt_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     try:
         with open(credentials_path, "r") as f:
-            return json.load(f)
+            credentials = json.load(f)
+            st.session_state.debug_info["load_status"] = "Success"
+            st.session_state.debug_info["user_count"] = len(credentials)
+            return credentials
     except FileNotFoundError:
+        st.session_state.debug_info["load_status"] = "File not found - Creating default"
+        
         # Create a default admin user if file doesn't exist
         default_salt = secrets.token_hex(16)
         default_credentials = {
@@ -57,32 +68,75 @@ def load_credentials():
         }
 
         # Ensure the utils directory exists
-        os.makedirs(utils_dir, exist_ok=True)
-        
-        with open(credentials_path, "w") as f:
-            json.dump(default_credentials, f, indent=4)
-        return default_credentials
+        try:
+            os.makedirs(utils_dir, exist_ok=True)
+            
+            with open(credentials_path, "w") as f:
+                json.dump(default_credentials, f, indent=4)
+            
+            st.session_state.debug_info["create_status"] = "Success"
+            return default_credentials
+        except Exception as e:
+            st.session_state.debug_info["create_status"] = f"Failed: {str(e)}"
+            # Return default credentials anyway to prevent further errors
+            return default_credentials
+    except Exception as e:
+        st.session_state.debug_info["load_status"] = f"Error: {str(e)}"
+        # Return empty credentials to prevent further errors
+        return {}
 
 # Function to save user credentials
 def save_credentials(credentials):
-    """Save user credentials to a JSON file."""
-    credentials_path = st.session_state.get('credentials_path')
-    
-    if not credentials_path:
-        # Fallback if path not in session state
+    """Save user credentials to a JSON file with comprehensive error handling."""
+    try:
+        # Get the absolute path to the utils directory
         utils_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "utils")
         credentials_path = os.path.join(utils_dir, "credentials.json")
-    
-    # Debug information
-    st.session_state['save_attempts'] = st.session_state.get('save_attempts', 0) + 1
-    
-    try:
+        
+        # Store debug information
+        if "debug_info" not in st.session_state:
+            st.session_state.debug_info = {}
+        
+        st.session_state.debug_info["credentials_path"] = credentials_path
+        st.session_state.debug_info["save_attempt_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.session_state.debug_info["user_count_to_save"] = len(credentials)
+        
+        # Ensure the directory exists
+        os.makedirs(utils_dir, exist_ok=True)
+        
+        # Try to create a backup before saving
+        try:
+            if os.path.exists(credentials_path):
+                backup_path = f"{credentials_path}.bak"
+                with open(credentials_path, "r") as src:
+                    current_data = src.read()
+                with open(backup_path, "w") as dst:
+                    dst.write(current_data)
+                st.session_state.debug_info["backup_status"] = "Success"
+        except Exception as e:
+            st.session_state.debug_info["backup_status"] = f"Failed: {str(e)}"
+        
+        # Write the file with pretty formatting
         with open(credentials_path, "w") as f:
             json.dump(credentials, f, indent=4)
+        
+        # Verify the file was written correctly
+        try:
+            with open(credentials_path, "r") as f:
+                verification = json.load(f)
+            if len(verification) == len(credentials):
+                st.session_state.debug_info["save_status"] = "Success - Verified"
+            else:
+                st.session_state.debug_info["save_status"] = "Warning - Verification mismatch"
+        except Exception as e:
+            st.session_state.debug_info["save_status"] = "Warning - Could not verify"
+            
         return True
+            
     except Exception as e:
-        st.error(f"Error saving credentials: {str(e)}")
-        st.session_state['save_error'] = str(e)
+        # Log the error
+        st.session_state.debug_info["save_status"] = "Failed - Exception"
+        st.session_state.debug_info["error"] = str(e)
         return False
 
 # Function to add a new user
@@ -111,11 +165,11 @@ def add_user(username, password, role):
     }
     
     # Save credentials
-    save_status = save_credentials(credentials)
-    if save_status:
+    save_result = save_credentials(credentials)
+    if save_result:
         return True, "User added successfully."
     else:
-        return False, "Failed to save credentials. Check logs for details."
+        return False, "Error saving user. Check debug information for details."
 
 # Function to delete a user
 def delete_user(username):
@@ -135,11 +189,11 @@ def delete_user(username):
     del credentials[username]
     
     # Save credentials
-    save_status = save_credentials(credentials)
-    if save_status:
+    save_result = save_credentials(credentials)
+    if save_result:
         return True, "User deleted successfully."
     else:
-        return False, "Failed to save credentials. Check logs for details."
+        return False, "Error deleting user. Check debug information for details."
 
 # Function to change user role
 def change_role(username, new_role):
@@ -160,11 +214,11 @@ def change_role(username, new_role):
     credentials[username]["role"] = new_role
     
     # Save credentials
-    save_status = save_credentials(credentials)
-    if save_status:
+    save_result = save_credentials(credentials)
+    if save_result:
         return True, "User role changed successfully."
     else:
-        return False, "Failed to save credentials. Check logs for details."
+        return False, "Error changing role. Check debug information for details."
 
 # Function to reset user password
 def reset_password(username, new_password):
@@ -189,11 +243,11 @@ def reset_password(username, new_password):
     credentials[username]["salt"] = salt
     
     # Save credentials
-    save_status = save_credentials(credentials)
-    if save_status:
+    save_result = save_credentials(credentials)
+    if save_result:
         return True, "Password reset successfully."
     else:
-        return False, "Failed to save credentials. Check logs for details."
+        return False, "Error resetting password. Check debug information for details."
 
 # Check if the user is authenticated
 if check_password():
@@ -212,13 +266,81 @@ if check_password():
     # Display user information
     st.sidebar.info(f"Logged in as: {st.session_state['username']} ({st.session_state['user_role']})")
     st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
-
-    # Debug information
-    if st.sidebar.checkbox("Show Debug Info"):
-        st.sidebar.write("Credentials Path:", st.session_state.get('credentials_path', 'Not set'))
-        st.sidebar.write("Save Attempts:", st.session_state.get('save_attempts', 0))
-        if 'save_error' in st.session_state:
-            st.sidebar.error(f"Last Error: {st.session_state['save_error']}")
+    
+    # Debug information toggle
+    if st.sidebar.checkbox("Show Debug Information"):
+        st.sidebar.subheader("Debug Information")
+        
+        if "debug_info" in st.session_state:
+            debug_info = st.session_state.debug_info
+            
+            st.sidebar.write("**Credentials Path:**")
+            st.sidebar.code(debug_info.get("credentials_path", "Not set"))
+            
+            st.sidebar.write("**File Operations:**")
+            cols = st.sidebar.columns(2)
+            
+            # Load info
+            cols[0].write("**Load Status:**")
+            load_status = debug_info.get("load_status", "Unknown")
+            if "Success" in load_status:
+                cols[0].success(load_status)
+            elif "Creating" in load_status:
+                cols[0].info(load_status)
+            else:
+                cols[0].error(load_status)
+            
+            # Save info
+            cols[1].write("**Save Status:**")
+            save_status = debug_info.get("save_status", "No saves yet")
+            if "Success" in save_status:
+                cols[1].success(save_status)
+            elif "Warning" in save_status:
+                cols[1].warning(save_status)
+            else:
+                cols[1].error(save_status)
+            
+            # User counts
+            st.sidebar.write("**User Counts:**")
+            cols2 = st.sidebar.columns(2)
+            cols2[0].metric("Loaded Users", debug_info.get("user_count", "Unknown"))
+            cols2[1].metric("Users to Save", debug_info.get("user_count_to_save", "Unknown"))
+            
+            # File system check
+            st.sidebar.write("**File System Check:**")
+            try:
+                utils_dir = os.path.dirname(debug_info.get("credentials_path", ""))
+                if utils_dir:
+                    if os.path.exists(utils_dir):
+                        st.sidebar.success(f"Directory exists: {os.path.basename(utils_dir)}")
+                        
+                        # Check permissions
+                        if os.access(utils_dir, os.W_OK):
+                            st.sidebar.success("Directory is writable")
+                        else:
+                            st.sidebar.error("Directory is not writable")
+                            
+                        # Check file
+                        cred_path = debug_info.get("credentials_path", "")
+                        if os.path.exists(cred_path):
+                            st.sidebar.success(f"Credentials file exists ({os.path.getsize(cred_path)} bytes)")
+                            if os.access(cred_path, os.W_OK):
+                                st.sidebar.success("File is writable")
+                            else:
+                                st.sidebar.error("File is not writable")
+                        else:
+                            st.sidebar.error("Credentials file does not exist")
+                    else:
+                        st.sidebar.error(f"Directory does not exist: {utils_dir}")
+            except Exception as e:
+                st.sidebar.error(f"Error checking file system: {str(e)}")
+            
+            # Error details if any
+            if "error" in debug_info:
+                st.sidebar.write("**Error Details:**")
+                st.sidebar.code(debug_info["error"])
+        else:
+            st.sidebar.info("No debug information available yet. Try performing an action first.")
 
     # Main app layout
     st.title("User Management")
@@ -260,7 +382,7 @@ if check_password():
                     else:
                         st.error(message)
         else:
-            st.info("No users to delete.")
+            st.info("No users available to delete.")
 
     with user_tab2:
         st.subheader("Add New User")
