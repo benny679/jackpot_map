@@ -39,6 +39,8 @@ def load_credentials():
     utils_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "utils")
     credentials_path = os.path.join(utils_dir, "credentials.json")
     
+    st.session_state['credentials_path'] = credentials_path  # Store path in session state for debugging
+    
     try:
         with open(credentials_path, "r") as f:
             return json.load(f)
@@ -58,17 +60,30 @@ def load_credentials():
         os.makedirs(utils_dir, exist_ok=True)
         
         with open(credentials_path, "w") as f:
-            json.dump(default_credentials, f)
+            json.dump(default_credentials, f, indent=4)
         return default_credentials
 
 # Function to save user credentials
 def save_credentials(credentials):
     """Save user credentials to a JSON file."""
-    utils_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "utils")
-    credentials_path = os.path.join(utils_dir, "credentials.json")
+    credentials_path = st.session_state.get('credentials_path')
     
-    with open(credentials_path, "w") as f:
-        json.dump(credentials, f)
+    if not credentials_path:
+        # Fallback if path not in session state
+        utils_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "utils")
+        credentials_path = os.path.join(utils_dir, "credentials.json")
+    
+    # Debug information
+    st.session_state['save_attempts'] = st.session_state.get('save_attempts', 0) + 1
+    
+    try:
+        with open(credentials_path, "w") as f:
+            json.dump(credentials, f, indent=4)
+        return True
+    except Exception as e:
+        st.error(f"Error saving credentials: {str(e)}")
+        st.session_state['save_error'] = str(e)
+        return False
 
 # Function to add a new user
 def add_user(username, password, role):
@@ -96,8 +111,11 @@ def add_user(username, password, role):
     }
     
     # Save credentials
-    save_credentials(credentials)
-    return True, "User added successfully."
+    save_status = save_credentials(credentials)
+    if save_status:
+        return True, "User added successfully."
+    else:
+        return False, "Failed to save credentials. Check logs for details."
 
 # Function to delete a user
 def delete_user(username):
@@ -117,8 +135,11 @@ def delete_user(username):
     del credentials[username]
     
     # Save credentials
-    save_credentials(credentials)
-    return True, "User deleted successfully."
+    save_status = save_credentials(credentials)
+    if save_status:
+        return True, "User deleted successfully."
+    else:
+        return False, "Failed to save credentials. Check logs for details."
 
 # Function to change user role
 def change_role(username, new_role):
@@ -139,8 +160,11 @@ def change_role(username, new_role):
     credentials[username]["role"] = new_role
     
     # Save credentials
-    save_credentials(credentials)
-    return True, "User role changed successfully."
+    save_status = save_credentials(credentials)
+    if save_status:
+        return True, "User role changed successfully."
+    else:
+        return False, "Failed to save credentials. Check logs for details."
 
 # Function to reset user password
 def reset_password(username, new_password):
@@ -165,8 +189,11 @@ def reset_password(username, new_password):
     credentials[username]["salt"] = salt
     
     # Save credentials
-    save_credentials(credentials)
-    return True, "Password reset successfully."
+    save_status = save_credentials(credentials)
+    if save_status:
+        return True, "Password reset successfully."
+    else:
+        return False, "Failed to save credentials. Check logs for details."
 
 # Check if the user is authenticated
 if check_password():
@@ -185,6 +212,13 @@ if check_password():
     # Display user information
     st.sidebar.info(f"Logged in as: {st.session_state['username']} ({st.session_state['user_role']})")
     st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
+
+    # Debug information
+    if st.sidebar.checkbox("Show Debug Info"):
+        st.sidebar.write("Credentials Path:", st.session_state.get('credentials_path', 'Not set'))
+        st.sidebar.write("Save Attempts:", st.session_state.get('save_attempts', 0))
+        if 'save_error' in st.session_state:
+            st.sidebar.error(f"Last Error: {st.session_state['save_error']}")
 
     # Main app layout
     st.title("User Management")
@@ -212,18 +246,21 @@ if check_password():
         
         # Delete user
         st.subheader("Delete User")
-        delete_username = st.selectbox("Select User to Delete", [user["Username"] for user in user_data])
-        
-        if st.button("Delete User"):
-            if delete_username == st.session_state["username"]:
-                st.error("You cannot delete your own account. Please ask another admin to do this.")
-            else:
-                success, message = delete_user(delete_username)
-                if success:
-                    st.success(message)
-                    st.rerun()
+        if user_data:
+            delete_username = st.selectbox("Select User to Delete", [user["Username"] for user in user_data])
+            
+            if st.button("Delete User"):
+                if delete_username == st.session_state["username"]:
+                    st.error("You cannot delete your own account. Please ask another admin to do this.")
                 else:
-                    st.error(message)
+                    success, message = delete_user(delete_username)
+                    if success:
+                        st.success(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
+        else:
+            st.info("No users to delete.")
 
     with user_tab2:
         st.subheader("Add New User")
@@ -258,24 +295,27 @@ if check_password():
         # Get usernames
         usernames = list(credentials.keys())
         
-        with st.form("change_role_form"):
-            username = st.selectbox("Select User", usernames)
-            current_role = credentials[username]["role"] if username in credentials else ""
-            st.info(f"Current Role: {current_role}")
-            new_role = st.selectbox("New Role", ["user", "analyst", "admin"])
-            
-            submit_button = st.form_submit_button("Change Role")
-            
-            if submit_button:
-                if new_role == current_role:
-                    st.info("No change needed - new role is the same as current role.")
-                else:
-                    success, message = change_role(username, new_role)
-                    if success:
-                        st.success(message)
-                        st.rerun()
+        if usernames:
+            with st.form("change_role_form"):
+                username = st.selectbox("Select User", usernames)
+                current_role = credentials[username]["role"] if username in credentials else ""
+                st.info(f"Current Role: {current_role}")
+                new_role = st.selectbox("New Role", ["user", "analyst", "admin"])
+                
+                submit_button = st.form_submit_button("Change Role")
+                
+                if submit_button:
+                    if new_role == current_role:
+                        st.info("No change needed - new role is the same as current role.")
                     else:
-                        st.error(message)
+                        success, message = change_role(username, new_role)
+                        if success:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
+        else:
+            st.info("No users available.")
 
     with user_tab4:
         st.subheader("Reset User Password")
@@ -286,23 +326,26 @@ if check_password():
         # Get usernames
         usernames = list(credentials.keys())
         
-        with st.form("reset_password_form"):
-            username = st.selectbox("Select User", usernames, key="reset_user")
-            new_password = st.text_input("New Password", type="password")
-            confirm_password = st.text_input("Confirm New Password", type="password")
-            
-            submit_button = st.form_submit_button("Reset Password")
-            
-            if submit_button:
-                if not new_password:
-                    st.error("Password is required.")
-                elif new_password != confirm_password:
-                    st.error("Passwords do not match.")
-                else:
-                    success, message = reset_password(username, new_password)
-                    if success:
-                        st.success(message)
+        if usernames:
+            with st.form("reset_password_form"):
+                username = st.selectbox("Select User", usernames, key="reset_user")
+                new_password = st.text_input("New Password", type="password")
+                confirm_password = st.text_input("Confirm New Password", type="password")
+                
+                submit_button = st.form_submit_button("Reset Password")
+                
+                if submit_button:
+                    if not new_password:
+                        st.error("Password is required.")
+                    elif new_password != confirm_password:
+                        st.error("Passwords do not match.")
                     else:
-                        st.error(message)
+                        success, message = reset_password(username, new_password)
+                        if success:
+                            st.success(message)
+                        else:
+                            st.error(message)
+        else:
+            st.info("No users available.")
 else:
     st.warning("Please log in to access user management.")
