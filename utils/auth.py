@@ -27,8 +27,12 @@ except ImportError:
 # Function to load user credentials from file
 def load_credentials():
     """Load user credentials from a JSON file."""
+    # Get the absolute path to the utils directory
+    utils_dir = os.path.dirname(os.path.abspath(__file__))
+    credentials_path = os.path.join(utils_dir, "credentials.json")
+    
     try:
-        with open("credentials.json", "r") as f:
+        with open(credentials_path, "r") as f:
             return json.load(f)
     except FileNotFoundError:
         # Create a default admin user if file doesn't exist
@@ -42,10 +46,10 @@ def load_credentials():
             }
         }
 
-        # Create directory if it doesn't exist
-        os.makedirs(os.path.dirname("credentials.json"), exist_ok=True)
+        # Create directory if it doesn't exist (shouldn't be needed since we're in utils)
+        os.makedirs(utils_dir, exist_ok=True)
 
-        with open("credentials.json", "w") as f:
+        with open(credentials_path, "w") as f:
             json.dump(default_credentials, f)
         return default_credentials
 
@@ -135,14 +139,19 @@ def check_password():
         Check if the user or IP is being rate limited due to too many failed attempts.
         Returns True if the user is allowed to attempt login, False if rate limited.
         """
+        # Get the absolute path to the utils directory
+        utils_dir = os.path.dirname(os.path.abspath(__file__))
+        logs_dir = os.path.join(utils_dir, "logs")
+        rate_limit_file = os.path.join(logs_dir, "rate_limits.json")
+        
         # Create rate limiting file if it doesn't exist
-        if not os.path.exists("logs/rate_limits.json"):
-            os.makedirs("logs", exist_ok=True)
-            with open("logs/rate_limits.json", "w") as f:
+        if not os.path.exists(rate_limit_file):
+            os.makedirs(logs_dir, exist_ok=True)
+            with open(rate_limit_file, "w") as f:
                 json.dump({}, f)
 
         # Load rate limiting data
-        with open("logs/rate_limits.json", "r") as f:
+        with open(rate_limit_file, "r") as f:
             rate_limits = json.load(f)
 
         current_time = time.time()
@@ -167,14 +176,19 @@ def check_password():
         Increment failed login attempts for a username and IP address.
         Implements rate limiting after too many failed attempts.
         """
+        # Get the absolute path to the utils directory
+        utils_dir = os.path.dirname(os.path.abspath(__file__))
+        logs_dir = os.path.join(utils_dir, "logs")
+        rate_limit_file = os.path.join(logs_dir, "rate_limits.json")
+        
         # Create rate limiting file if it doesn't exist
-        if not os.path.exists("logs/rate_limits.json"):
-            os.makedirs("logs", exist_ok=True)
-            with open("logs/rate_limits.json", "w") as f:
+        if not os.path.exists(rate_limit_file):
+            os.makedirs(logs_dir, exist_ok=True)
+            with open(rate_limit_file, "w") as f:
                 json.dump({}, f)
 
         # Load rate limiting data
-        with open("logs/rate_limits.json", "r") as f:
+        with open(rate_limit_file, "r") as f:
             rate_limits = json.load(f)
 
         current_time = time.time()
@@ -217,18 +231,21 @@ def check_password():
             rate_limits[ip_key] = {"attempts": 1, "window_end": current_time + 300}
 
         # Save updated rate limiting data
-        with open("logs/rate_limits.json", "w") as f:
+        with open(rate_limit_file, "w") as f:
             json.dump(rate_limits, f)
 
     def log_login_activity(username, status, ip_address):
         """Log login activity to a file with IP information"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        # Get the absolute path to the utils directory
+        utils_dir = os.path.dirname(os.path.abspath(__file__))
+        logs_dir = os.path.join(utils_dir, "logs")
+        log_file = os.path.join(logs_dir, "login_activity.csv")
+        
         # Create logs directory if it doesn't exist
-        if not os.path.exists("logs"):
-            os.makedirs("logs")
-
-        log_file = "logs/login_activity.csv"
+        if not os.path.exists(logs_dir):
+            os.makedirs(logs_dir)
 
         # Check if file exists, create with header if it doesn't
         file_exists = os.path.isfile(log_file)
@@ -280,5 +297,5 @@ def check_logout_flag():
 
 # Add this check early in your app's flow, not in a callback
 # For example, in your main app file after initializing session state:
-initialize_session_state()
-check_logout_flag()  # Add this line to check for logout requests
+# initialize_session_state()
+# check_logout_flag()  # Add this line to check for logout requests
