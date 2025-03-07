@@ -35,9 +35,11 @@ initialize_session_state()
 # Function to load user credentials
 def load_credentials():
     """Load user credentials from a JSON file."""
+    # Get the absolute path to the utils directory
+    utils_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "utils")
+    credentials_path = os.path.join(utils_dir, "credentials.json")
+    
     try:
-        # Use utils directory for credentials
-        credentials_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "utils", "credentials.json")
         with open(credentials_path, "r") as f:
             return json.load(f)
     except FileNotFoundError:
@@ -52,10 +54,8 @@ def load_credentials():
             }
         }
 
-        # Create directory if it doesn't exist
-        credentials_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "utils")
-        os.makedirs(credentials_dir, exist_ok=True)
-        credentials_path = os.path.join(credentials_dir, "credentials.json")
+        # Ensure the utils directory exists
+        os.makedirs(utils_dir, exist_ok=True)
         
         with open(credentials_path, "w") as f:
             json.dump(default_credentials, f)
@@ -64,7 +64,9 @@ def load_credentials():
 # Function to save user credentials
 def save_credentials(credentials):
     """Save user credentials to a JSON file."""
-    credentials_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "utils", "credentials.json")
+    utils_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "utils")
+    credentials_path = os.path.join(utils_dir, "credentials.json")
+    
     with open(credentials_path, "w") as f:
         json.dump(credentials, f)
 
