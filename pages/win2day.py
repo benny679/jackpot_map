@@ -24,6 +24,13 @@ st.set_page_config(
     layout="wide"
 )
 
+# Check if the user is authenticated
+if check_password():
+    # Check if user has admin role
+    if st.session_state.get("user_role") != "admin":
+        st.error("You don't have permission to access this page.")
+        st.stop()
+
 # Title and description
 st.title("Original Win2Day Analysis")
 st.markdown("This is the original analysis script with multiple visualization options.")
