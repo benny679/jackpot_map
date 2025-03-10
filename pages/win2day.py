@@ -13,19 +13,19 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from pprint import pprint
 from io import BytesIO
-# Remove these imports and define the functions directly in this file
-# from utils.auth import check_password, logout, initialize_session_state
-# from utils.ip_manager import log_ip_activity
-# from utils.data_loader import load_win2day_data, clean_jackpot_value, upload_to_slack
+import hashlib
+import hmac
+import time
+from datetime import datetime
 
 # Set page config
 st.set_page_config(
-    page_title="Original Analysis",
+    page_title="Win2Day Analysis",
     page_icon="📈",
     layout="wide"
 )
 
-# Define functions that would have been imported
+# Define authentication functions
 def initialize_session_state():
     """Initialize session state variables for authentication"""
     if "authenticated" not in st.session_state:
@@ -41,25 +41,111 @@ def initialize_session_state():
     if "locked_until" not in st.session_state:
         st.session_state.locked_until = None
 
+def hash_password(password):
+    """Create a secure hash of the password"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def verify_password(username, password):
+    """Verify username and password against stored credentials"""
+    # In a real application, you would check against a database
+    # For this example, we'll use Streamlit secrets
+    users = st.secrets.get("users", {})
+    
+    if username in users:
+        stored_password = users[username].get("password")
+        stored_role = users[username].get("role", "user")
+        
+        # Verify password hash
+        if hmac.compare_digest(hash_password(password), stored_password):
+            return True, stored_role
+    
+    return False, None
+
 def check_password():
     """Returns True if the user has valid credentials, False otherwise"""
-    # For simplicity, just set to authenticated and admin role
-    st.session_state.authenticated = True
-    st.session_state.username = "admin"
-    st.session_state.user_role = "admin"
-    return True
+    initialize_session_state()
+    
+    # If the user is already authenticated, return True
+    if st.session_state.authenticated:
+        # Check if session has expired (8 hours)
+        if st.session_state.login_time and time.time() - st.session_state.login_time > 8 * 3600:
+            logout()
+            st.error("Your session has expired. Please log in again.")
+            return False
+        return True
+    
+    # Check if account is temporarily locked
+    if st.session_state.locked_until and time.time() < st.session_state.locked_until:
+        remaining_time = int(st.session_state.locked_until - time.time())
+        st.error(f"Account temporarily locked. Try again in {remaining_time} seconds.")
+        return False
+    
+    # Create login form
+    st.subheader("Login Required")
+    st.warning("This dashboard contains sensitive data. Please log in to continue.")
+    
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submit = st.form_submit_button("Log In")
+    
+    if submit:
+        # Validate credentials
+        if not username or not password:
+            st.error("Please enter both username and password")
+            return False
+        
+        verified, role = verify_password(username, password)
+        
+        if verified:
+            st.session_state.authenticated = True
+            st.session_state.username = username
+            st.session_state.user_role = role
+            st.session_state.login_time = time.time()
+            st.session_state.login_attempts = 0
+            log_ip_activity(username, "login")
+            st.success(f"Welcome {username}!")
+            
+            # Force a rerun to update the page
+            st.experimental_rerun()
+            return True
+        else:
+            # Increment login attempts
+            st.session_state.login_attempts += 1
+            log_ip_activity(username, "failed_login")
+            
+            # Lock account after 5 failed attempts
+            if st.session_state.login_attempts >= 5:
+                st.session_state.locked_until = time.time() + 300  # Lock for 5 minutes
+                st.error("Too many failed login attempts. Account locked for 5 minutes.")
+            else:
+                st.error(f"Invalid username or password. Attempt {st.session_state.login_attempts}/5")
+            
+            return False
+    
+    return False
 
 def logout():
     """Log out the user by resetting session state"""
+    username = st.session_state.username
     st.session_state.authenticated = False
     st.session_state.username = ""
     st.session_state.user_role = ""
     st.session_state.login_time = None
+    
+    log_ip_activity(username, "logout")
 
 def log_ip_activity(username, action="access"):
-    """Log user activity - simplified version"""
-    # Just pass for now
-    pass
+    """Log user activity for security monitoring"""
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_entry = f"{timestamp} - User: {username} - Action: {action}"
+        
+        # In a production environment, you would log this to a secure database or file
+        if st.secrets.get("environment") == "development":
+            print(log_entry)
+    except:
+        pass  # Fail silently in production
 
 @st.cache_data(ttl=3600)  # Cache data for 1 hour
 def load_win2day_data():
@@ -114,15 +200,37 @@ def clean_jackpot_value(df, column="Jackpot Win"):
     return df
 
 def upload_to_slack(message, level="info", attachment=None):
-    """Simplified placeholder for Slack uploads"""
-    # Just pass for now
-    pass
+    """For security notifications - implementation omitted"""
+    pass  # Implementation omitted for brevity
 
 # Initialize session state
 initialize_session_state()
 
-# Rest of your code remains the same
-# ...
+# Add logout button in sidebar if user is authenticated
+if st.session_state.authenticated:
+    if st.sidebar.button("Log Out"):
+        logout()
+        st.experimental_rerun()
+
+# Check if the user is authenticated
+if not check_password():
+    # Stop further execution - user needs to log in
+    st.stop()
+
+# Check if user has sufficient permissions (analyst or admin)
+if st.session_state.user_role not in ["admin", "analyst"]:
+    st.error("You don't have permission to access this analysis page. Please contact an administrator.")
+    st.stop()
+
+# Log successful access
+log_ip_activity(st.session_state.username, "access_analysis")
+
+# Title and description
+st.title("Win2Day Analysis Dashboard")
+st.markdown(f"Welcome {st.session_state.username}! This dashboard provides visualization and analysis of jackpot data.")
+
+# Set the plotting style
+style.use('ggplot')
 
 def analyze_with_matplotlib(filtered_df, game_to_analyze):
     """Generate analysis using Matplotlib"""
