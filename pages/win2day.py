@@ -118,7 +118,7 @@ def check_password():
             st.success(f"Welcome {username}!")
             
             # Force a rerun to update the page
-            st.experimental_rerun()
+            st.rerun()
             return True
         else:
             # Increment login attempts
@@ -226,7 +226,7 @@ initialize_session_state()
 if st.session_state.authenticated:
     if st.sidebar.button("Log Out"):
         logout()
-        st.experimental_rerun()
+        st.rerun()
 
 # Check if the user is authenticated
 if not check_password():
