@@ -21,21 +21,6 @@ st.set_page_config(
     layout="wide"
 )
 
-
-
-# 5. AUTHENTICATION CHECK
-if check_password():
-    # Log the page view
-    if "username" in st.session_state and "ip_address" in st.session_state:
-        log_ip_activity(st.session_state["username"], "page_view_igaming_dashboard", st.session_state["ip_address"])
-
-    # Show logout button and user info
-    st.sidebar.button("Logout", on_click=logout)
-    st.sidebar.info(f"Logged in as: {st.session_state['username']} ({st.session_state['user_role']})")
-
-    if st.session_state["user_role"] == "admin":
-        st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
-
 # Title and description
 st.title("Original Win2Day Analysis")
 st.markdown("This is the original analysis script with multiple visualization options.")
