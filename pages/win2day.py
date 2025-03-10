@@ -13,240 +13,59 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from pprint import pprint
 from io import BytesIO
-import hashlib
-import hmac
-import time
-from datetime import datetime
-import json
-import os
-from pathlib import Path
 
 # Set page config
 st.set_page_config(
-    page_title="Win2Day Analysis",
+    page_title="Original Analysis",
     page_icon="📈",
     layout="wide"
 )
 
-# Define authentication functions
-def initialize_session_state():
-    """Initialize session state variables for authentication"""
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
-    if "username" not in st.session_state:
-        st.session_state.username = ""
-    if "user_role" not in st.session_state:
-        st.session_state.user_role = ""
-    if "login_time" not in st.session_state:
-        st.session_state.login_time = None
-    if "login_attempts" not in st.session_state:
-        st.session_state.login_attempts = 0
-    if "locked_until" not in st.session_state:
-        st.session_state.locked_until = None
+# Title and description
+st.title("Original Win2Day Analysis")
+st.markdown("This is the original analysis script with multiple visualization options.")
 
-def load_credentials():
-    """Load credentials from credentials.json file"""
+# Set the plotting style
+style.use('ggplot')
+
+# Function to load data from Google Sheets
+@st.cache_data(ttl=3600)
+def load_sheet_data():
+    """Load data from Google Sheets using gspread and Streamlit secrets"""
     try:
-        # Get the path to credentials.json relative to the current file
-        base_dir = Path(__file__).parent.parent
-        credentials_path = base_dir / "utils" / "credentials.json"
-        
-        with open(credentials_path, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        st.error(f"Error loading credentials: {e}")
-        return {}
-
-def verify_password(username, password):
-    """Verify username and password against stored credentials"""
-    credentials = load_credentials()
-    users = credentials.get("users", {})
-    
-    if username in users:
-        stored_password = users[username].get("password")
-        stored_role = users[username].get("role", "user")
-        
-        # Direct password comparison
-        if password == stored_password:
-            return True, stored_role
-    
-    return False, None
-
-def check_password():
-    """Returns True if the user has valid credentials, False otherwise"""
-    initialize_session_state()
-    
-    # If the user is already authenticated, return True
-    if st.session_state.authenticated:
-        # Check if session has expired (8 hours)
-        if st.session_state.login_time and time.time() - st.session_state.login_time > 8 * 3600:
-            logout()
-            st.error("Your session has expired. Please log in again.")
-            return False
-        return True
-    
-    # Check if account is temporarily locked
-    if st.session_state.locked_until and time.time() < st.session_state.locked_until:
-        remaining_time = int(st.session_state.locked_until - time.time())
-        st.error(f"Account temporarily locked. Try again in {remaining_time} seconds.")
-        return False
-    
-    # Create login form
-    st.subheader("Login Required")
-    st.warning("This dashboard contains sensitive data. Please log in to continue.")
-    
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Log In")
-    
-    if submit:
-        # Validate credentials
-        if not username or not password:
-            st.error("Please enter both username and password")
-            return False
-        
-        verified, role = verify_password(username, password)
-        
-        if verified:
-            st.session_state.authenticated = True
-            st.session_state.username = username
-            st.session_state.user_role = role
-            st.session_state.login_time = time.time()
-            st.session_state.login_attempts = 0
-            log_ip_activity(username, "login")
-            st.success(f"Welcome {username}!")
-            
-            # Force a rerun to update the page
-            st.rerun()
-            return True
-        else:
-            # Increment login attempts
-            st.session_state.login_attempts += 1
-            log_ip_activity(username, "failed_login")
-            
-            # Lock account after 5 failed attempts
-            if st.session_state.login_attempts >= 5:
-                st.session_state.locked_until = time.time() + 300  # Lock for 5 minutes
-                st.error("Too many failed login attempts. Account locked for 5 minutes.")
-            else:
-                st.error(f"Invalid username or password. Attempt {st.session_state.login_attempts}/5")
-            
-            return False
-    
-    return False
-
-def logout():
-    """Log out the user by resetting session state"""
-    username = st.session_state.username
-    st.session_state.authenticated = False
-    st.session_state.username = ""
-    st.session_state.user_role = ""
-    st.session_state.login_time = None
-    
-    log_ip_activity(username, "logout")
-
-def log_ip_activity(username, action="access"):
-    """Log user activity for security monitoring"""
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_entry = f"{timestamp} - User: {username} - Action: {action}"
-        
-        # Get environment from credentials
-        credentials = load_credentials()
-        environment = credentials.get("environment", "production")
-        
-        if environment == "development":
-            print(log_entry)
-    except:
-        pass  # Fail silently in production
-
-@st.cache_data(ttl=3600)  # Cache data for 1 hour
-def load_win2day_data():
-    """
-    Load data from Google Sheets using credentials.json
-    Returns DataFrame
-    """
-    try:
-        # Get the path to credentials.json
-        base_dir = Path(__file__).parent.parent
-        credentials_path = base_dir / "utils" / "credentials.json"
-        
-        # Set up the credentials
+        # Set up the credentials using Streamlit secrets
         scope = ['https://spreadsheets.google.com/feeds',
-                 'https://www.googleapis.com/auth/drive']
+                'https://www.googleapis.com/auth/drive']
         
-        # Load Google Sheet API credentials from the credentials file
-        credentials = ServiceAccountCredentials.from_json_keyfile_name(str(credentials_path), scope)
+        # Get credentials from Streamlit secrets
+        service_account_info = st.secrets["gcp_service_account"]
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+            service_account_info, scope)
+        
         client = gspread.authorize(credentials)
 
-        # Get sheet ID from credentials file
-        with open(credentials_path, 'r') as f:
-            creds = json.load(f)
-        
-        sheet_id = creds.get("sheet_id")
-        
-        # Open the Google Sheet
+        # Open the Google Sheet (using sheet_id from secrets)
+        sheet_id = st.secrets["sheet_id"]
         sheet = client.open_by_key(sheet_id)
-        
-        # Select the specific worksheet
+
+        # Select the specific worksheet - note we're using 'Historical Wins' as in the original script
         worksheet = sheet.worksheet('Historical Wins')
-        
+
         # Get all data from the worksheet
         data = worksheet.get_all_records()
-        
+
         # Convert to DataFrame
         df = pd.DataFrame(data)
-        
-        # Convert date column
+
+        # Convert date and set as index
         df["Date"] = pd.to_datetime(df["Date Won"])
         
         return df
     
     except Exception as e:
         st.error(f"Error loading data: {e}")
+        st.info("Make sure you have configured your Streamlit secrets with Google API credentials.")
         return None
-
-def clean_jackpot_value(df, column="Jackpot Win"):
-    """Clean jackpot values by removing currency symbols and commas"""
-    if column in df.columns:
-        df[column] = df[column].str.replace("€", "")
-        df[column] = df[column].str.replace(",", "")
-        df[column] = df[column].astype(float)
-    return df
-
-def upload_to_slack(message, level="info", attachment=None):
-    """For security notifications - implementation omitted"""
-    pass  # Implementation omitted for brevity
-
-# Initialize session state
-initialize_session_state()
-
-# Add logout button in sidebar if user is authenticated
-if st.session_state.authenticated:
-    if st.sidebar.button("Log Out"):
-        logout()
-        st.rerun()
-
-# Check if the user is authenticated
-if not check_password():
-    # Stop further execution - user needs to log in
-    st.stop()
-
-# Check if user has sufficient permissions (analyst or admin)
-if st.session_state.user_role not in ["admin", "analyst"]:
-    st.error("You don't have permission to access this analysis page. Please contact an administrator.")
-    st.stop()
-
-# Log successful access
-log_ip_activity(st.session_state.username, "access_analysis")
-
-# Title and description
-st.title("Win2Day Analysis Dashboard")
-st.markdown(f"Welcome {st.session_state.username}! This dashboard provides visualization and analysis of jackpot data.")
-
-# Set the plotting style
-style.use('ggplot')
 
 def analyze_with_matplotlib(filtered_df, game_to_analyze):
     """Generate analysis using Matplotlib"""
@@ -582,7 +401,7 @@ def analyze_win2day_data(df, game_to_analyze, viz_method):
 
 # Load the data first
 with st.spinner("Loading data from Google Sheets..."):
-    df = load_win2day_data()
+    df = load_sheet_data()
 
 if df is not None:
     # Show some basic info about the dataset
@@ -646,8 +465,6 @@ if df is not None:
             analyze_win2day_data(df_filtered, game_to_analyze, viz_method)
     else:
         st.info("Select a game and visualization method from the sidebar, then click 'Run Analysis' to generate the plots.")
-else:
-    st.error("Failed to load data. Please check your Google API credentials.")
 
 # Add explanation
 with st.expander("About This Analysis"):
