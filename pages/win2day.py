@@ -13,6 +13,9 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from pprint import pprint
 from io import BytesIO
+from utils.auth import check_password, logout, initialize_session_state
+from utils.ip_manager import log_ip_activity
+from utils.data_loader import upload_to_slack
 
 # Set page config
 st.set_page_config(
