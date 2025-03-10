@@ -424,7 +424,7 @@ if check_password():
     
     # Title and description
     st.title("Win2Day Analysis Dashboard")
-    st.markdown(f"Welcome {st.session_state['username']}! This dashboard provides visualization and analysis of jackpot data.")
+    st.markdown(f"Welcome {st.session_state['username']}!")
     
     # Load the data
     with st.spinner("Loading data from Google Sheets..."):
