@@ -372,19 +372,19 @@ def analyze_win2day_data(df, game_to_analyze, viz_method):
         analyze_with_altair(filtered_df, game_to_analyze)
     elif viz_method == "Streamlit Native":
         analyze_with_streamlit_native(filtered_df, game_to_analyze)
-
-# Show the data
-with st.expander("View Analysis Data"):
-    st.dataframe(filtered_df)
     
-    # Add CSV download option
-    csv = filtered_df.to_csv().encode('utf-8')
-    st.download_button(
-        label="Download Data as CSV",
-        data=csv,
-        file_name=f"{game_to_analyze}_data.csv",
-        mime="text/csv",
-    )
+    # Show the data
+    with st.expander("View Analysis Data"):
+        st.dataframe(filtered_df)
+        
+        # Add CSV download option
+        csv = filtered_df.to_csv().encode('utf-8')
+        st.download_button(
+            label="Download Data as CSV",
+            data=csv,
+            file_name=f"{game_to_analyze}_data.csv",
+            mime="text/csv",
+        )
 
 # Load the data first
 with st.spinner("Loading data from Google Sheets..."):
@@ -452,6 +452,8 @@ if df is not None:
             analyze_win2day_data(df_filtered, game_to_analyze, viz_method)
     else:
         st.info("Select a game and visualization method from the sidebar, then click 'Run Analysis' to generate the plots.")
+else:
+    st.error("Failed to load data. Please check your Google Sheets API credentials.")
 
 # Add explanation
 with st.expander("About This Analysis"):
