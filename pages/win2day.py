@@ -36,9 +36,6 @@ if check_password():
     if st.session_state["user_role"] == "admin":
         st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
 
-# Initialize session state
-initialize_session_state()
-
 # Title and description
 st.title("Original Win2Day Analysis")
 st.markdown("This is the original analysis script with multiple visualization options.")
