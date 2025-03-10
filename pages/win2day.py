@@ -15,7 +15,7 @@ from pprint import pprint
 from io import BytesIO
 from utils.auth import check_password, logout, initialize_session_state
 from utils.ip_manager import log_ip_activity
-from utils.data_loader import upload_to_slack
+from utils.data_loader import load_win2day_data, clean_jackpot_value, upload_to_slack
 
 # Set page config
 st.set_page_config(
@@ -24,58 +24,35 @@ st.set_page_config(
     layout="wide"
 )
 
+# Initialize session state
+initialize_session_state()
+
+# Add logout button in sidebar if user is authenticated
+if st.session_state.authenticated:
+    if st.sidebar.button("Log Out"):
+        logout()
+        log_ip_activity(st.session_state.username, "logout")
+        st.experimental_rerun()
+
 # Check if the user is authenticated
-if check_password():
-    # Check if user has admin role
-    if st.session_state.get("user_role") != "admin":
-        st.error("You don't have permission to access this page.")
-        st.stop()
+if not check_password():
+    # Stop further execution - user needs to log in
+    st.stop()
+
+# Check if user has sufficient permissions (analyst or admin)
+if st.session_state.user_role not in ["admin", "analyst"]:
+    st.error("You don't have permission to access this analysis page. Please contact an administrator.")
+    st.stop()
+
+# Log successful access
+log_ip_activity(st.session_state.username, "access_analysis")
 
 # Title and description
 st.title("Original Win2Day Analysis")
-st.markdown("This is the original analysis script with multiple visualization options.")
+st.markdown(f"Welcome {st.session_state.username}! This is the original analysis script with multiple visualization options.")
 
 # Set the plotting style
 style.use('ggplot')
-
-# Function to load data from Google Sheets
-@st.cache_data(ttl=3600)
-def load_sheet_data():
-    """Load data from Google Sheets using gspread and Streamlit secrets"""
-    try:
-        # Set up the credentials using Streamlit secrets
-        scope = ['https://spreadsheets.google.com/feeds',
-                'https://www.googleapis.com/auth/drive']
-        
-        # Get credentials from Streamlit secrets
-        service_account_info = st.secrets["gcp_service_account"]
-        credentials = ServiceAccountCredentials.from_json_keyfile_dict(
-            service_account_info, scope)
-        
-        client = gspread.authorize(credentials)
-
-        # Open the Google Sheet (using sheet_id from secrets)
-        sheet_id = st.secrets["sheet_id"]
-        sheet = client.open_by_key(sheet_id)
-
-        # Select the specific worksheet - note we're using 'Historical Wins' as in the original script
-        worksheet = sheet.worksheet('Historical Wins')
-
-        # Get all data from the worksheet
-        data = worksheet.get_all_records()
-
-        # Convert to DataFrame
-        df = pd.DataFrame(data)
-
-        # Convert date and set as index
-        df["Date"] = pd.to_datetime(df["Date Won"])
-        
-        return df
-    
-    except Exception as e:
-        st.error(f"Error loading data: {e}")
-        st.info("Make sure you have configured your Streamlit secrets with Google API credentials.")
-        return None
 
 def analyze_with_matplotlib(filtered_df, game_to_analyze):
     """Generate analysis using Matplotlib"""
@@ -395,23 +372,23 @@ def analyze_win2day_data(df, game_to_analyze, viz_method):
         analyze_with_altair(filtered_df, game_to_analyze)
     elif viz_method == "Streamlit Native":
         analyze_with_streamlit_native(filtered_df, game_to_analyze)
+
+# Show the data
+with st.expander("View Analysis Data"):
+    st.dataframe(filtered_df)
     
-    # Show the data
-    with st.expander("View Analysis Data"):
-        st.dataframe(filtered_df)
-        
-        # Add CSV download option
-        csv = filtered_df.to_csv().encode('utf-8')
-        st.download_button(
-            label="Download Data as CSV",
-            data=csv,
-            file_name=f"{game_to_analyze}_data.csv",
-            mime="text/csv",
-        )
+    # Add CSV download option
+    csv = filtered_df.to_csv().encode('utf-8')
+    st.download_button(
+        label="Download Data as CSV",
+        data=csv,
+        file_name=f"{game_to_analyze}_data.csv",
+        mime="text/csv",
+    )
 
 # Load the data first
 with st.spinner("Loading data from Google Sheets..."):
-    df = load_sheet_data()
+    df = load_win2day_data()
 
 if df is not None:
     # Show some basic info about the dataset
