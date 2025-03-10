@@ -25,7 +25,6 @@ st.set_page_config(
 
 # Import auth functions from utils/auth.py
 from utils.auth import check_password, logout, initialize_session_state
-from utils.ip_manager import log_ip_activity
 
 # Set the plotting style
 style.use('ggplot')
