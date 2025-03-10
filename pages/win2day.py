@@ -13,17 +13,112 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from pprint import pprint
 from io import BytesIO
+import json
+import time
+from datetime import datetime
+from pathlib import Path
 
 # Set page config
 st.set_page_config(
-    page_title="Original Analysis",
+    page_title="Win2Day Analysis",
     page_icon="📈",
     layout="wide"
 )
 
-# Title and description
-st.title("Original Win2Day Analysis")
-st.markdown("This is the original analysis script with multiple visualization options.")
+# Authentication Functions
+def initialize_session_state():
+    """Initialize session state variables for authentication"""
+    if "authenticated" not in st.session_state:
+        st.session_state["authenticated"] = False
+    if "username" not in st.session_state:
+        st.session_state["username"] = ""
+    if "user_role" not in st.session_state:
+        st.session_state["user_role"] = ""
+    if "login_time" not in st.session_state:
+        st.session_state["login_time"] = None
+    if "login_attempts" not in st.session_state:
+        st.session_state["login_attempts"] = 0
+
+def load_credentials():
+    """Load credentials from credentials.json file"""
+    try:
+        # Get the path to credentials.json relative to the current file
+        base_dir = Path(__file__).parent.parent
+        credentials_path = base_dir / "utils" / "credentials.json"
+        
+        with open(credentials_path, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        st.error(f"Error loading credentials: {e}")
+        return {}
+
+def verify_password(username, password):
+    """Verify username and password against stored credentials"""
+    credentials = load_credentials()
+    users = credentials.get("users", {})
+    
+    if username in users:
+        stored_password = users[username].get("password")
+        stored_role = users[username].get("role", "user")
+        
+        # Direct password comparison
+        if password == stored_password:
+            return True, stored_role
+    
+    return False, None
+
+def login():
+    """Handle user login"""
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submit = st.form_submit_button("Log In")
+    
+    if submit:
+        if not username or not password:
+            st.error("Please enter both username and password")
+            return False
+        
+        verified, role = verify_password(username, password)
+        
+        if verified:
+            st.session_state["authenticated"] = True
+            st.session_state["username"] = username
+            st.session_state["user_role"] = role
+            st.session_state["login_time"] = time.time()
+            st.success(f"Welcome {username}!")
+            st.rerun()
+            return True
+        else:
+            st.error("Invalid username or password")
+            return False
+    
+    return False
+
+def logout():
+    """Log out the user by resetting session state"""
+    st.session_state["authenticated"] = False
+    st.session_state["username"] = ""
+    st.session_state["user_role"] = ""
+    st.session_state["login_time"] = None
+    st.rerun()
+
+def check_password():
+    """Simplified check password function that returns True if authenticated"""
+    # If the user is already authenticated, return True
+    if st.session_state["authenticated"]:
+        return True
+    
+    # Otherwise, show login form
+    st.subheader("Login Required")
+    st.warning("This dashboard contains sensitive data. Please log in to continue.")
+    login()
+    return False
+
+def log_ip_activity(username, action="page_view"):
+    """Log user activity for security monitoring"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"{timestamp} - User: {username} - Action: {action}")
 
 # Set the plotting style
 style.use('ggplot')
@@ -31,40 +126,45 @@ style.use('ggplot')
 # Function to load data from Google Sheets
 @st.cache_data(ttl=3600)
 def load_sheet_data():
-    """Load data from Google Sheets using gspread and Streamlit secrets"""
+    """Load data from Google Sheets using credentials.json"""
     try:
-        # Set up the credentials using Streamlit secrets
+        # Get the path to credentials.json
+        base_dir = Path(__file__).parent.parent
+        credentials_path = base_dir / "utils" / "credentials.json"
+        
+        # Set up the credentials
         scope = ['https://spreadsheets.google.com/feeds',
                 'https://www.googleapis.com/auth/drive']
         
-        # Get credentials from Streamlit secrets
-        service_account_info = st.secrets["gcp_service_account"]
-        credentials = ServiceAccountCredentials.from_json_keyfile_dict(
-            service_account_info, scope)
-        
+        # Load Google Sheet API credentials from the credentials file
+        credentials = ServiceAccountCredentials.from_json_keyfile_name(str(credentials_path), scope)
         client = gspread.authorize(credentials)
 
-        # Open the Google Sheet (using sheet_id from secrets)
-        sheet_id = st.secrets["sheet_id"]
+        # Get sheet ID from credentials file
+        with open(credentials_path, 'r') as f:
+            creds = json.load(f)
+        
+        sheet_id = creds.get("sheet_id")
+        
+        # Open the Google Sheet
         sheet = client.open_by_key(sheet_id)
-
-        # Select the specific worksheet - note we're using 'Historical Wins' as in the original script
+        
+        # Select the specific worksheet
         worksheet = sheet.worksheet('Historical Wins')
-
+        
         # Get all data from the worksheet
         data = worksheet.get_all_records()
-
+        
         # Convert to DataFrame
         df = pd.DataFrame(data)
-
-        # Convert date and set as index
+        
+        # Convert date column
         df["Date"] = pd.to_datetime(df["Date Won"])
         
         return df
     
     except Exception as e:
         st.error(f"Error loading data: {e}")
-        st.info("Make sure you have configured your Streamlit secrets with Google API credentials.")
         return None
 
 def analyze_with_matplotlib(filtered_df, game_to_analyze):
@@ -399,98 +499,117 @@ def analyze_win2day_data(df, game_to_analyze, viz_method):
             mime="text/csv",
         )
 
-# Load the data first
-with st.spinner("Loading data from Google Sheets..."):
-    df = load_sheet_data()
+# Initialize session state for authentication
+initialize_session_state()
 
-if df is not None:
-    # Show some basic info about the dataset
-    st.success(f"Data loaded successfully! Found {df['Concat'].nunique()} unique games.")
+# 5. AUTHENTICATION CHECK
+if check_password():
+    # Log the page view
+    if "username" in st.session_state:
+        log_ip_activity(st.session_state["username"], "page_view_win2day_analysis")
     
-    # Add sidebar for game selection
-    st.sidebar.header("Analysis Settings")
+    # Show logout button and user info
+    st.sidebar.button("Logout", on_click=logout)
+    st.sidebar.info(f"Logged in as: {st.session_state['username']} ({st.session_state['user_role']})")
     
-    # Let the user select a game to analyze
-    game_options = sorted(df['Concat'].unique().tolist())
-    default_game = " €€€ Jackpot" if " €€€ Jackpot" in game_options else game_options[0]
-    game_to_analyze = st.sidebar.selectbox(
-        "Select Game to Analyze", 
-        game_options, 
-        index=game_options.index(default_game)
-    )
+    # Check user permissions
+    if st.session_state["user_role"] not in ["admin", "analyst"]:
+        st.error("You don't have permission to access this analysis page. Please contact an administrator.")
+        st.stop()
+        
+    # Title and description
+    st.title("Win2Day Analysis Dashboard")
+    st.markdown(f"Welcome {st.session_state['username']}! This dashboard provides visualization and analysis of jackpot data.")
     
-    # Add visualization method selection
-    viz_methods = ["Matplotlib", "Plotly", "Altair", "Streamlit Native"]
-    viz_method = st.sidebar.selectbox(
-        "Select Visualization Method",
-        viz_methods,
-        index=0  # Default to Matplotlib
-    )
-    
-    # Add an option to filter by date range
-    st.sidebar.subheader("Date Filter (Optional)")
-    date_filter = st.sidebar.checkbox("Filter by Date Range")
-    
-    if date_filter:
-        date_min = df["Date"].min().date()
-        date_max = df["Date"].max().date()
-        date_range = st.sidebar.date_input(
-            "Select Date Range",
-            value=(date_min, date_max),
-            min_value=date_min,
-            max_value=date_max
+    # Load the data
+    with st.spinner("Loading data from Google Sheets..."):
+        df = load_sheet_data()
+
+    if df is not None:
+        # Show some basic info about the dataset
+        st.success(f"Data loaded successfully! Found {df['Concat'].nunique()} unique games.")
+        
+        # Add sidebar for game selection
+        st.sidebar.header("Analysis Settings")
+        
+        # Let the user select a game to analyze
+        game_options = sorted(df['Concat'].unique().tolist())
+        default_game = " €€€ Jackpot" if " €€€ Jackpot" in game_options else game_options[0]
+        game_to_analyze = st.sidebar.selectbox(
+            "Select Game to Analyze", 
+            game_options, 
+            index=game_options.index(default_game)
         )
         
-        # Apply date filter if selected
-        if len(date_range) == 2:
-            start_date, end_date = date_range
-            mask = (df["Date"].dt.date >= start_date) & (df["Date"].dt.date <= end_date)
-            df_filtered = df[mask]
-            st.sidebar.info(f"Filtered to {len(df_filtered)} records between {start_date} and {end_date}")
+        # Add visualization method selection
+        viz_methods = ["Matplotlib", "Plotly", "Altair", "Streamlit Native"]
+        viz_method = st.sidebar.selectbox(
+            "Select Visualization Method",
+            viz_methods,
+            index=0  # Default to Matplotlib
+        )
+        
+        # Add an option to filter by date range
+        st.sidebar.subheader("Date Filter (Optional)")
+        date_filter = st.sidebar.checkbox("Filter by Date Range")
+        
+        if date_filter:
+            date_min = df["Date"].min().date()
+            date_max = df["Date"].max().date()
+            date_range = st.sidebar.date_input(
+                "Select Date Range",
+                value=(date_min, date_max),
+                min_value=date_min,
+                max_value=date_max
+            )
+            
+            # Apply date filter if selected
+            if len(date_range) == 2:
+                start_date, end_date = date_range
+                mask = (df["Date"].dt.date >= start_date) & (df["Date"].dt.date <= end_date)
+                df_filtered = df[mask]
+                st.sidebar.info(f"Filtered to {len(df_filtered)} records between {start_date} and {end_date}")
+            else:
+                df_filtered = df
         else:
             df_filtered = df
+        
+        # Run analysis button
+        run_analysis = st.sidebar.button("Run Analysis", type="primary")
+        
+        # Show preview of selected data
+        with st.expander("Preview Selected Game Data"):
+            preview_df = df_filtered[df_filtered["Concat"] == game_to_analyze].head(10)
+            st.dataframe(preview_df)
+        
+        if run_analysis:
+            with st.spinner(f"Analyzing {game_to_analyze} using {viz_method}..."):
+                analyze_win2day_data(df_filtered, game_to_analyze, viz_method)
+        else:
+            st.info("Select a game and visualization method from the sidebar, then click 'Run Analysis' to generate the plots.")
     else:
-        df_filtered = df
-    
-    # Run analysis button
-    run_analysis = st.sidebar.button("Run Analysis", type="primary")
-    
-    # Show preview of selected data
-    with st.expander("Preview Selected Game Data"):
-        preview_df = df_filtered[df_filtered["Concat"] == game_to_analyze].head(10)
-        st.dataframe(preview_df)
-    
-    if run_analysis:
-        with st.spinner(f"Analyzing {game_to_analyze} using {viz_method}..."):
-            analyze_win2day_data(df_filtered, game_to_analyze, viz_method)
-    else:
-        st.info("Select a game and visualization method from the sidebar, then click 'Run Analysis' to generate the plots.")
+        st.error("Failed to load data. Please check your Google API credentials.")
 
-# Add explanation
-with st.expander("About This Analysis"):
-    st.markdown("""
-    This page runs the Win2Day analysis with multiple visualization options.
-    
-    ### Key features:
-    
-    - **Multiple Visualization Libraries**:
-      - **Matplotlib**: Traditional static plots with detailed customization
-      - **Plotly**: Interactive charts with hover information and zooming
-      - **Altair**: Declarative visualization with pan/zoom capabilities
-      - **Streamlit Native**: Simple charts built directly into Streamlit
-    
-    - **Interactive Controls**:
-      - Select which jackpot game to analyze
-      - Choose your preferred visualization library
-      - Filter by date range for focused analysis
-      
-    - **Data Analysis**:
-      - Distribution of jackpot win amounts
-      - Individual jackpot wins over time
-      - Cumulative jackpot winnings trend
-      - Statistical analysis with probability plots
-      
-    Each visualization library has different strengths. Plotly and Altair are interactive 
-    and allow zooming and panning. Matplotlib offers the most detailed customization options.
-    Streamlit native charts are simpler but integrate seamlessly with the interface.
-    """)
+    # Add explanation
+    with st.expander("About This Analysis"):
+        st.markdown("""
+        This page runs the Win2Day analysis with multiple visualization options.
+        
+        ### Key features:
+        
+        - **Multiple Visualization Libraries**:
+          - **Matplotlib**: Traditional static plots with detailed customization
+          - **Plotly**: Interactive charts with hover information and zooming
+          - **Altair**: Declarative visualization with pan/zoom capabilities
+          - **Streamlit Native**: Simple charts built directly into Streamlit
+        
+        - **Interactive Controls**:
+          - Select which jackpot game to analyze
+          - Choose your preferred visualization library
+          - Filter by date range for focused analysis
+          
+        - **Data Analysis**:
+          - Distribution of jackpot win amounts
+          - Individual jackpot wins over time
+          - Cumulative jackpot winnings trend
+          - Statistical analysis with probability plots""")
