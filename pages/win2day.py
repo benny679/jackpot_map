@@ -12,42 +12,6 @@ from scipy.stats import probplot
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from pprint import pprint
-@st.cache_data(ttl=3600)
-def load_win2day_data():
-    """Load data from Google Sheets using gspread and Streamlit secrets"""
-    try:
-        # Set up the credentials using Streamlit secrets
-        scope = ['https://spreadsheets.google.com/feeds',
-                'https://www.googleapis.com/auth/drive']
-        
-        # Get credentials from Streamlit secrets
-        service_account_info = st.secrets["gcp_service_account"]
-        credentials = ServiceAccountCredentials.from_json_keyfile_dict(
-            service_account_info, scope)
-        
-        client = gspread.authorize(credentials)
-
-        # Open the Google Sheet (using sheet_id from secrets)
-        sheet_id = st.secrets["sheet_id"]
-        sheet = client.open_by_key(sheet_id)
-        
-        # Select the specific worksheet
-        worksheet = sheet.worksheet('Historical Wins')
-        
-        # Get all data from the worksheet
-        data = worksheet.get_all_records()
-        
-        # Convert to DataFrame
-        df = pd.DataFrame(data)
-        
-        # Convert date column
-        df["Date"] = pd.to_datetime(df["Date Won"])
-        
-        return df
-    
-    except Exception as e:
-        st.error(f"Error loading data: {e}")
-        return None
 from io import BytesIO
 from utils.auth import check_password, logout, initialize_session_state
 from utils.ip_manager import log_ip_activity
@@ -89,6 +53,43 @@ st.markdown(f"Welcome {st.session_state.username}! This is the original analysis
 
 # Set the plotting style
 style.use('ggplot')
+
+@st.cache_data(ttl=3600)
+def load_win2day_data():
+    """Load data from Google Sheets using gspread and Streamlit secrets"""
+    try:
+        # Set up the credentials using Streamlit secrets
+        scope = ['https://spreadsheets.google.com/feeds',
+                'https://www.googleapis.com/auth/drive']
+        
+        # Get credentials from Streamlit secrets
+        service_account_info = st.secrets["gcp_service_account"]
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+            service_account_info, scope)
+        
+        client = gspread.authorize(credentials)
+
+        # Open the Google Sheet (using sheet_id from secrets)
+        sheet_id = st.secrets["sheet_id"]
+        sheet = client.open_by_key(sheet_id)
+        
+        # Select the specific worksheet
+        worksheet = sheet.worksheet('Historical Wins')
+        
+        # Get all data from the worksheet
+        data = worksheet.get_all_records()
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(data)
+        
+        # Convert date column
+        df["Date"] = pd.to_datetime(df["Date Won"])
+        
+        return df
+    
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+        return None
 
 def analyze_with_matplotlib(filtered_df, game_to_analyze):
     """Generate analysis using Matplotlib"""
