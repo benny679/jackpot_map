@@ -3,6 +3,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+import altair as alt
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from matplotlib import style
 from scipy.stats import probplot
 import gspread
@@ -19,7 +23,7 @@ st.set_page_config(
 
 # Title and description
 st.title("Original Win2Day Analysis")
-st.markdown("This is the original analysis script implemented as a Streamlit page.")
+st.markdown("This is the original analysis script with multiple visualization options.")
 
 # Set the plotting style
 style.use('ggplot')
@@ -63,28 +67,8 @@ def load_sheet_data():
         st.info("Make sure you have configured your Streamlit secrets with Google API credentials.")
         return None
 
-def analyze_win2day_data(df, game_to_analyze):
-    """
-    Analyzes jackpot data for a specific game
-    """
-    if df is None or game_to_analyze is None:
-        return
-        
-    # Set date as index for analysis
-    df = df.set_index("Date")
-    
-    # Filter for selected game
-    filtered_df = df[df["Concat"] == game_to_analyze].copy()
-    
-    if filtered_df.empty:
-        st.warning(f"No data available for {game_to_analyze}")
-        return
-    
-    # Clean the Jackpot Win column
-    filtered_df["Jackpot Win"] = filtered_df["Jackpot Win"].str.replace("€", "")
-    filtered_df["Jackpot Win"] = filtered_df["Jackpot Win"].str.replace(",", "")
-    filtered_df["Jackpot Win"] = filtered_df["Jackpot Win"].astype(float)  # Use float instead of int for decimal values
-
+def analyze_with_matplotlib(filtered_df, game_to_analyze):
+    """Generate analysis using Matplotlib"""
     # Create figure
     fig, ax = plt.subplots(2, 2, figsize=(20, 12))
 
@@ -102,10 +86,6 @@ def analyze_win2day_data(df, game_to_analyze):
     ax[0,0].legend()
 
     # Plot of cumulative sum of Jackpot Win over time
-    filtered_df = filtered_df.sort_index()  # Ensure data is sorted by date
-    filtered_df["Cumulative Jackpot Win"] = filtered_df["Jackpot Win"].cumsum()
-
-    # Use step plot to properly show cumulative growth over time
     ax[1,0].step(filtered_df.index, filtered_df["Cumulative Jackpot Win"], where='post',
                 linewidth=2.5, color='darkred', label="Cumulative Jackpot Win")
     ax[1,0].fill_between(filtered_df.index, filtered_df["Cumulative Jackpot Win"],
@@ -142,6 +122,269 @@ def analyze_win2day_data(df, game_to_analyze):
         file_name=f"{game_to_analyze}_analysis.png",
         mime="image/png"
     )
+
+def analyze_with_plotly(filtered_df, game_to_analyze):
+    """Generate analysis using Plotly for interactive plots"""
+    # Create a 2x2 subplot layout
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=[
+            f"{game_to_analyze} Jackpot Win Distribution",
+            f"{game_to_analyze} Jackpot Win",
+            f"{game_to_analyze} Cumulative Jackpot Win Over Time",
+            "Normal Q-Q Plot"
+        ],
+        specs=[[{"type": "histogram"}, {"type": "scatter"}],
+               [{"type": "scatter"}, {"type": "scatter"}]]
+    )
+    
+    # Histogram (Row 1, Col 1)
+    fig.add_trace(
+        go.Histogram(
+            x=filtered_df["Jackpot Win"],
+            nbinsx=20,
+            marker_color='indianred',
+            name="Jackpot Distribution"
+        ),
+        row=1, col=1
+    )
+    
+    # Scatter plot (Row 1, Col 2)
+    fig.add_trace(
+        go.Scatter(
+            x=filtered_df.index,
+            y=filtered_df["Jackpot Win"],
+            mode="markers",
+            name="Jackpot Wins",
+            marker=dict(color="royalblue")
+        ),
+        row=1, col=2
+    )
+    
+    # Cumulative line (Row 2, Col 1)
+    fig.add_trace(
+        go.Scatter(
+            x=filtered_df.index,
+            y=filtered_df["Cumulative Jackpot Win"],
+            mode="lines+markers",
+            name="Cumulative Jackpot Win",
+            marker=dict(color="darkred"),
+            fill='tozeroy'
+        ),
+        row=2, col=1
+    )
+    
+    # QQ Plot (Row 2, Col 2)
+    from scipy import stats
+    if len(filtered_df) > 2:
+        qq_x = np.linspace(0, 1, len(filtered_df))
+        qq_x = qq_x[1:-1]  # Remove extremes that can cause infinity
+        theoretical_quantiles = stats.norm.ppf(qq_x)
+        ordered_values = np.sort(filtered_df["Jackpot Win"])[1:-1]
+        
+        # Add points
+        fig.add_trace(
+            go.Scatter(
+                x=theoretical_quantiles,
+                y=ordered_values,
+                mode="markers",
+                name="Data Points",
+                marker=dict(color="green")
+            ),
+            row=2, col=2
+        )
+        
+        # Add reference line
+        q25 = np.percentile(theoretical_quantiles, 25)
+        q75 = np.percentile(theoretical_quantiles, 75)
+        y25 = np.percentile(ordered_values, 25)
+        y75 = np.percentile(ordered_values, 75)
+        
+        slope = (y75 - y25) / (q75 - q25)
+        intercept = y25 - slope * q25
+        
+        x_line = np.array([theoretical_quantiles.min(), theoretical_quantiles.max()])
+        y_line = slope * x_line + intercept
+        
+        fig.add_trace(
+            go.Scatter(
+                x=x_line,
+                y=y_line,
+                mode="lines",
+                name="Reference Line",
+                line=dict(color="red", dash="dash")
+            ),
+            row=2, col=2
+        )
+    
+    # Update layout and axes
+    fig.update_layout(
+        height=800,
+        width=1200,
+        showlegend=True,
+        title_text=f"{game_to_analyze} Analysis",
+        hovermode="closest"
+    )
+    
+    # Customize x-axis and y-axis labels
+    fig.update_xaxes(title_text="Jackpot Win (€)", row=1, col=1)
+    fig.update_yaxes(title_text="Frequency", row=1, col=1)
+    
+    fig.update_xaxes(title_text="Date", row=1, col=2)
+    fig.update_yaxes(title_text="Jackpot Win (€)", row=1, col=2)
+    
+    fig.update_xaxes(title_text="Date", row=2, col=1)
+    fig.update_yaxes(title_text="Cumulative Jackpot Win (€)", row=2, col=1)
+    
+    fig.update_xaxes(title_text="Theoretical Quantiles", row=2, col=2)
+    fig.update_yaxes(title_text="Ordered Values", row=2, col=2)
+    
+    # Display the Plotly figure in Streamlit
+    st.plotly_chart(fig, use_container_width=True)
+
+def analyze_with_altair(filtered_df, game_to_analyze):
+    """Generate analysis using Altair for interactive plots"""
+    # Convert index to column for Altair
+    df_reset = filtered_df.reset_index()
+    
+    # Create histograms
+    hist = alt.Chart(df_reset).mark_bar().encode(
+        alt.X('Jackpot Win:Q', bin=alt.Bin(maxbins=20), title='Jackpot Win (€)'),
+        alt.Y('count()', title='Count'),
+        tooltip=['count()', alt.Tooltip('Jackpot Win:Q', format=',.2f')]
+    ).properties(
+        title=f"{game_to_analyze} Jackpot Win Distribution",
+        width=500,
+        height=300
+    )
+    
+    # Create scatter plot
+    scatter = alt.Chart(df_reset).mark_circle(size=60).encode(
+        x=alt.X('Date:T', title='Date'),
+        y=alt.Y('Jackpot Win:Q', title='Jackpot Win (€)'),
+        tooltip=['Date:T', alt.Tooltip('Jackpot Win:Q', format=',.2f')]
+    ).properties(
+        title=f"{game_to_analyze} Jackpot Wins Over Time",
+        width=500,
+        height=300
+    ).interactive()
+    
+    # Create line chart for cumulative sum
+    line = alt.Chart(df_reset).mark_line(color='darkred').encode(
+        x=alt.X('Date:T', title='Date'),
+        y=alt.Y('Cumulative Jackpot Win:Q', title='Cumulative Jackpot Win (€)'),
+        tooltip=['Date:T', alt.Tooltip('Cumulative Jackpot Win:Q', format=',.2f')]
+    ).properties(
+        title=f"{game_to_analyze} Cumulative Jackpot Win Over Time",
+        width=500,
+        height=300
+    ).interactive()
+    
+    # Add points to line chart
+    points = alt.Chart(df_reset).mark_circle(color='darkred', size=60).encode(
+        x='Date:T',
+        y='Cumulative Jackpot Win:Q',
+        tooltip=['Date:T', alt.Tooltip('Cumulative Jackpot Win:Q', format=',.2f')]
+    )
+    
+    cumulative_chart = (line + points).properties(
+        width=500,
+        height=300
+    )
+    
+    # Create a text annotation for the QQ plot
+    qq_text = alt.Chart({'values': [{'text': 'QQ Plot Not Available in Altair'}]}).mark_text(
+        fontSize=20,
+        fontStyle='italic',
+        color='gray'
+    ).encode(
+        text='text:N'
+    ).properties(
+        width=500,
+        height=300,
+        title="Normal Q-Q Plot"
+    )
+    
+    # Combine charts
+    top_row = alt.hconcat(hist, scatter)
+    bottom_row = alt.hconcat(cumulative_chart, qq_text)
+    
+    # Display the charts
+    st.altair_chart(alt.vconcat(top_row, bottom_row), use_container_width=True)
+
+def analyze_with_streamlit_native(filtered_df, game_to_analyze):
+    """Generate analysis using Streamlit's native plotting capabilities"""
+    # Create a 2x2 layout
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Histogram using st.bar_chart
+        st.subheader(f"{game_to_analyze} Jackpot Win Distribution")
+        hist_data = pd.DataFrame(
+            filtered_df["Jackpot Win"].value_counts(bins=20).sort_index()
+        )
+        st.bar_chart(hist_data)
+        
+        # Cumulative line using st.line_chart
+        st.subheader(f"{game_to_analyze} Cumulative Jackpot Win Over Time")
+        st.line_chart(filtered_df["Cumulative Jackpot Win"])
+    
+    with col2:
+        # Scatter plot
+        st.subheader(f"{game_to_analyze} Jackpot Wins Over Time")
+        scatter_df = pd.DataFrame({'Jackpot Win': filtered_df["Jackpot Win"]})
+        st.scatter_chart(scatter_df)
+        
+        # Instead of QQ Plot, show monthly sums
+        st.subheader("Win Distribution by Month")
+        # Create a copy to avoid modifying filtered_df which is already set with Date as index
+        monthly_df = filtered_df.copy()
+        monthly_wins = monthly_df.resample('M').sum()
+        st.bar_chart(monthly_wins["Jackpot Win"])
+
+def analyze_win2day_data(df, game_to_analyze, viz_method):
+    """
+    Analyzes jackpot data for a specific game using the selected visualization method
+    """
+    if df is None or game_to_analyze is None:
+        return
+        
+    # Set date as index for analysis
+    df = df.set_index("Date")
+    
+    # Filter for selected game
+    filtered_df = df[df["Concat"] == game_to_analyze].copy()
+    
+    if filtered_df.empty:
+        st.warning(f"No data available for {game_to_analyze}")
+        return
+    
+    # Clean the Jackpot Win column
+    filtered_df["Jackpot Win"] = filtered_df["Jackpot Win"].str.replace("€", "")
+    filtered_df["Jackpot Win"] = filtered_df["Jackpot Win"].str.replace(",", "")
+    filtered_df["Jackpot Win"] = filtered_df["Jackpot Win"].astype(float)  # Use float instead of int for decimal values
+    
+    # Ensure data is sorted by date for cumulative calculations
+    filtered_df = filtered_df.sort_index()
+    filtered_df["Cumulative Jackpot Win"] = filtered_df["Jackpot Win"].cumsum()
+    
+    # Show summary statistics
+    st.subheader("Summary Statistics")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Jackpot", f"€{filtered_df['Jackpot Win'].sum():,.2f}")
+    col2.metric("Average Win", f"€{filtered_df['Jackpot Win'].mean():,.2f}")
+    col3.metric("Highest Win", f"€{filtered_df['Jackpot Win'].max():,.2f}")
+    col4.metric("Number of Wins", f"{len(filtered_df)}")
+    
+    # Generate the visualization based on the selected method
+    if viz_method == "Matplotlib":
+        analyze_with_matplotlib(filtered_df, game_to_analyze)
+    elif viz_method == "Plotly":
+        analyze_with_plotly(filtered_df, game_to_analyze)
+    elif viz_method == "Altair":
+        analyze_with_altair(filtered_df, game_to_analyze)
+    elif viz_method == "Streamlit Native":
+        analyze_with_streamlit_native(filtered_df, game_to_analyze)
     
     # Show the data
     with st.expander("View Analysis Data"):
@@ -155,14 +398,6 @@ def analyze_win2day_data(df, game_to_analyze):
             file_name=f"{game_to_analyze}_data.csv",
             mime="text/csv",
         )
-        
-    # Show summary statistics
-    st.subheader("Summary Statistics")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Jackpot", f"€{filtered_df['Jackpot Win'].sum():,.2f}")
-    col2.metric("Average Win", f"€{filtered_df['Jackpot Win'].mean():,.2f}")
-    col3.metric("Highest Win", f"€{filtered_df['Jackpot Win'].max():,.2f}")
-    col4.metric("Number of Wins", f"{len(filtered_df)}")
 
 # Load the data first
 with st.spinner("Loading data from Google Sheets..."):
@@ -182,6 +417,14 @@ if df is not None:
         "Select Game to Analyze", 
         game_options, 
         index=game_options.index(default_game)
+    )
+    
+    # Add visualization method selection
+    viz_methods = ["Matplotlib", "Plotly", "Altair", "Streamlit Native"]
+    viz_method = st.sidebar.selectbox(
+        "Select Visualization Method",
+        viz_methods,
+        index=0  # Default to Matplotlib
     )
     
     # Add an option to filter by date range
@@ -218,25 +461,36 @@ if df is not None:
         st.dataframe(preview_df)
     
     if run_analysis:
-        with st.spinner(f"Analyzing {game_to_analyze}..."):
-            analyze_win2day_data(df_filtered, game_to_analyze)
+        with st.spinner(f"Analyzing {game_to_analyze} using {viz_method}..."):
+            analyze_win2day_data(df_filtered, game_to_analyze, viz_method)
     else:
-        st.info("Select a game from the sidebar and click 'Run Analysis' to generate the plots.")
+        st.info("Select a game and visualization method from the sidebar, then click 'Run Analysis' to generate the plots.")
 
 # Add explanation
 with st.expander("About This Analysis"):
     st.markdown("""
-    This page runs the original Win2Day analysis script, adapted to work within Streamlit.
+    This page runs the Win2Day analysis with multiple visualization options.
     
-    Key features:
-    - Select which jackpot game to analyze from the sidebar
-    - Optional date filtering to focus on specific time periods
-    - Interactive plots showing win distributions and trends
-    - Downloads available for both plots and data
+    ### Key features:
     
-    The analysis shows:
-    - Distribution of jackpot win amounts
-    - Scatter plot of individual jackpot wins over time
-    - Cumulative jackpot winnings over time
-    - Probability plot to assess normality of win distributions
+    - **Multiple Visualization Libraries**:
+      - **Matplotlib**: Traditional static plots with detailed customization
+      - **Plotly**: Interactive charts with hover information and zooming
+      - **Altair**: Declarative visualization with pan/zoom capabilities
+      - **Streamlit Native**: Simple charts built directly into Streamlit
+    
+    - **Interactive Controls**:
+      - Select which jackpot game to analyze
+      - Choose your preferred visualization library
+      - Filter by date range for focused analysis
+      
+    - **Data Analysis**:
+      - Distribution of jackpot win amounts
+      - Individual jackpot wins over time
+      - Cumulative jackpot winnings trend
+      - Statistical analysis with probability plots
+      
+    Each visualization library has different strengths. Plotly and Altair are interactive 
+    and allow zooming and panning. Matplotlib offers the most detailed customization options.
+    Streamlit native charts are simpler but integrate seamlessly with the interface.
     """)
