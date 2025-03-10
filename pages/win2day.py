@@ -31,28 +31,25 @@ from utils.ip_manager import log_ip_activity
 # Set the plotting style
 style.use('ggplot')
 
-# Function to load data from Google Sheets
 @st.cache_data(ttl=3600)
 def load_sheet_data():
-    """Load data from Google Sheets using credentials from utils/credentials.json"""
+    """Load data from Google Sheets using credentials from Streamlit secrets"""
     try:
-        # Get the path to credentials.json
-        base_dir = Path(__file__).parent.parent
-        credentials_path = base_dir / "utils" / "credentials.json"
+        # Get credentials from Streamlit secrets
+        service_account_info = st.secrets["gcp_service_account"]
         
-        # Set up the credentials
+        # Set up the credentials using the service account info
         scope = ['https://spreadsheets.google.com/feeds',
                  'https://www.googleapis.com/auth/drive']
         
-        # Load credentials from file
-        credentials = ServiceAccountCredentials.from_json_keyfile_name(str(credentials_path), scope)
+        # Create credentials directly from the secrets dict
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+            service_account_info, scope)
+            
         client = gspread.authorize(credentials)
 
-        # Get sheet ID from credentials file
-        with open(credentials_path, 'r') as f:
-            creds = json.load(f)
-        
-        sheet_id = creds.get("sheet_id")
+        # Get sheet ID from secrets
+        sheet_id = st.secrets["sheet_id"]
         
         # Open the Google Sheet
         sheet = client.open_by_key(sheet_id)
