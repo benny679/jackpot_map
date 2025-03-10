@@ -17,6 +17,9 @@ import hashlib
 import hmac
 import time
 from datetime import datetime
+import json
+import os
+from pathlib import Path
 
 # Set page config
 st.set_page_config(
@@ -25,9 +28,21 @@ st.set_page_config(
     layout="wide"
 )
 
-import json
-import os
-from pathlib import Path
+# Define authentication functions
+def initialize_session_state():
+    """Initialize session state variables for authentication"""
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    if "username" not in st.session_state:
+        st.session_state.username = ""
+    if "user_role" not in st.session_state:
+        st.session_state.user_role = ""
+    if "login_time" not in st.session_state:
+        st.session_state.login_time = None
+    if "login_attempts" not in st.session_state:
+        st.session_state.login_attempts = 0
+    if "locked_until" not in st.session_state:
+        st.session_state.locked_until = None
 
 def load_credentials():
     """Load credentials from credentials.json file"""
@@ -56,6 +71,80 @@ def verify_password(username, password):
             return True, stored_role
     
     return False, None
+
+def check_password():
+    """Returns True if the user has valid credentials, False otherwise"""
+    initialize_session_state()
+    
+    # If the user is already authenticated, return True
+    if st.session_state.authenticated:
+        # Check if session has expired (8 hours)
+        if st.session_state.login_time and time.time() - st.session_state.login_time > 8 * 3600:
+            logout()
+            st.error("Your session has expired. Please log in again.")
+            return False
+        return True
+    
+    # Check if account is temporarily locked
+    if st.session_state.locked_until and time.time() < st.session_state.locked_until:
+        remaining_time = int(st.session_state.locked_until - time.time())
+        st.error(f"Account temporarily locked. Try again in {remaining_time} seconds.")
+        return False
+    
+    # Create login form
+    st.subheader("Login Required")
+    st.warning("This dashboard contains sensitive data. Please log in to continue.")
+    
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submit = st.form_submit_button("Log In")
+    
+    if submit:
+        # Validate credentials
+        if not username or not password:
+            st.error("Please enter both username and password")
+            return False
+        
+        verified, role = verify_password(username, password)
+        
+        if verified:
+            st.session_state.authenticated = True
+            st.session_state.username = username
+            st.session_state.user_role = role
+            st.session_state.login_time = time.time()
+            st.session_state.login_attempts = 0
+            log_ip_activity(username, "login")
+            st.success(f"Welcome {username}!")
+            
+            # Force a rerun to update the page
+            st.experimental_rerun()
+            return True
+        else:
+            # Increment login attempts
+            st.session_state.login_attempts += 1
+            log_ip_activity(username, "failed_login")
+            
+            # Lock account after 5 failed attempts
+            if st.session_state.login_attempts >= 5:
+                st.session_state.locked_until = time.time() + 300  # Lock for 5 minutes
+                st.error("Too many failed login attempts. Account locked for 5 minutes.")
+            else:
+                st.error(f"Invalid username or password. Attempt {st.session_state.login_attempts}/5")
+            
+            return False
+    
+    return False
+
+def logout():
+    """Log out the user by resetting session state"""
+    username = st.session_state.username
+    st.session_state.authenticated = False
+    st.session_state.username = ""
+    st.session_state.user_role = ""
+    st.session_state.login_time = None
+    
+    log_ip_activity(username, "logout")
 
 def log_ip_activity(username, action="access"):
     """Log user activity for security monitoring"""
@@ -558,7 +647,7 @@ if df is not None:
     else:
         st.info("Select a game and visualization method from the sidebar, then click 'Run Analysis' to generate the plots.")
 else:
-    st.error("Failed to load data. Please check your Google Sheets API credentials.")
+    st.error("Failed to load data. Please check your Google API credentials.")
 
 # Add explanation
 with st.expander("About This Analysis"):
