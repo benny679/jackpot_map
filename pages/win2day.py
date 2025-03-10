@@ -14,111 +14,18 @@ from oauth2client.service_account import ServiceAccountCredentials
 from pprint import pprint
 from io import BytesIO
 import json
-import time
-from datetime import datetime
 from pathlib import Path
 
 # Set page config
 st.set_page_config(
-    page_title="Win2Day Analysis",
+    page_title="Original Analysis",
     page_icon="📈",
     layout="wide"
 )
 
-# Authentication Functions
-def initialize_session_state():
-    """Initialize session state variables for authentication"""
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
-    if "username" not in st.session_state:
-        st.session_state["username"] = ""
-    if "user_role" not in st.session_state:
-        st.session_state["user_role"] = ""
-    if "login_time" not in st.session_state:
-        st.session_state["login_time"] = None
-    if "login_attempts" not in st.session_state:
-        st.session_state["login_attempts"] = 0
-
-def load_credentials():
-    """Load credentials from credentials.json file"""
-    try:
-        # Get the path to credentials.json relative to the current file
-        base_dir = Path(__file__).parent.parent
-        credentials_path = base_dir / "utils" / "credentials.json"
-        
-        with open(credentials_path, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        st.error(f"Error loading credentials: {e}")
-        return {}
-
-def verify_password(username, password):
-    """Verify username and password against stored credentials"""
-    credentials = load_credentials()
-    users = credentials.get("users", {})
-    
-    if username in users:
-        stored_password = users[username].get("password")
-        stored_role = users[username].get("role", "user")
-        
-        # Direct password comparison
-        if password == stored_password:
-            return True, stored_role
-    
-    return False, None
-
-def login():
-    """Handle user login"""
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Log In")
-    
-    if submit:
-        if not username or not password:
-            st.error("Please enter both username and password")
-            return False
-        
-        verified, role = verify_password(username, password)
-        
-        if verified:
-            st.session_state["authenticated"] = True
-            st.session_state["username"] = username
-            st.session_state["user_role"] = role
-            st.session_state["login_time"] = time.time()
-            st.success(f"Welcome {username}!")
-            st.rerun()
-            return True
-        else:
-            st.error("Invalid username or password")
-            return False
-    
-    return False
-
-def logout():
-    """Log out the user by resetting session state"""
-    st.session_state["authenticated"] = False
-    st.session_state["username"] = ""
-    st.session_state["user_role"] = ""
-    st.session_state["login_time"] = None
-    st.rerun()
-
-def check_password():
-    """Simplified check password function that returns True if authenticated"""
-    # If the user is already authenticated, return True
-    if st.session_state["authenticated"]:
-        return True
-    
-    # Otherwise, show login form
-    st.subheader("Login Required")
-    st.warning("This dashboard contains sensitive data. Please log in to continue.")
-    login()
-    return False
-
-def log_ip_activity(username, action="page_view"):
-    """Log user activity for security monitoring"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"{timestamp} - User: {username} - Action: {action}")
+# Import auth functions from utils/auth.py
+from utils.auth import check_password, logout, initialize_session_state
+from utils.ip_manager import log_ip_activity
 
 # Set the plotting style
 style.use('ggplot')
@@ -126,7 +33,7 @@ style.use('ggplot')
 # Function to load data from Google Sheets
 @st.cache_data(ttl=3600)
 def load_sheet_data():
-    """Load data from Google Sheets using credentials.json"""
+    """Load data from Google Sheets using credentials from utils/credentials.json"""
     try:
         # Get the path to credentials.json
         base_dir = Path(__file__).parent.parent
@@ -134,9 +41,9 @@ def load_sheet_data():
         
         # Set up the credentials
         scope = ['https://spreadsheets.google.com/feeds',
-                'https://www.googleapis.com/auth/drive']
+                 'https://www.googleapis.com/auth/drive']
         
-        # Load Google Sheet API credentials from the credentials file
+        # Load credentials from file
         credentials = ServiceAccountCredentials.from_json_keyfile_name(str(credentials_path), scope)
         client = gspread.authorize(credentials)
 
@@ -499,24 +406,22 @@ def analyze_win2day_data(df, game_to_analyze, viz_method):
             mime="text/csv",
         )
 
-# Initialize session state for authentication
+# Initialize session state
 initialize_session_state()
 
 # 5. AUTHENTICATION CHECK
 if check_password():
     # Log the page view
-    if "username" in st.session_state:
-        log_ip_activity(st.session_state["username"], "page_view_win2day_analysis")
+    if "username" in st.session_state and "ip_address" in st.session_state:
+        log_ip_activity(st.session_state["username"], "page_view_win2day_analysis", st.session_state["ip_address"])
     
     # Show logout button and user info
     st.sidebar.button("Logout", on_click=logout)
     st.sidebar.info(f"Logged in as: {st.session_state['username']} ({st.session_state['user_role']})")
     
-    # Check user permissions
-    if st.session_state["user_role"] not in ["admin", "analyst"]:
-        st.error("You don't have permission to access this analysis page. Please contact an administrator.")
-        st.stop()
-        
+    if st.session_state["user_role"] == "admin":
+        st.sidebar.info(f"Your IP: {st.session_state['ip_address']}")
+    
     # Title and description
     st.title("Win2Day Analysis Dashboard")
     st.markdown(f"Welcome {st.session_state['username']}! This dashboard provides visualization and analysis of jackpot data.")
